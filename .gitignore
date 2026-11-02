@@ -1,0 +1,4 @@
+# 本机配置(端口 / 会话 token)
+config.json
+node_modules/
+.vscode/settings.json

@@ -1,0 +1,36 @@
+{
+  "name": "dsh-agent-code-tutor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把编辑器当手和眼:editor_* 工具接 agent_code_tutor 的 VS Code 扩展。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "editor",
+    "vscode",
+    "agent"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

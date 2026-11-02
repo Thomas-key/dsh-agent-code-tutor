@@ -1,0 +1,13 @@
+# dsh-agent-code-tutor bundle:把 editor_* 工具挂上。
+#
+# 桥的另一头是 agent_code_tutor 那个 VS Code 扩展(默认 127.0.0.1:41890)。
+# 扩展没跑也行:插件照样加载,调工具时会返回"连不上编辑器"。
+#
+# 端口 / token 想固定写死就取消下面注释 —— 注释掉时按
+# 环境变量 → config.json → 默认值 的顺序取。
+- insert:
+    - id: dsh-agent-code-tutor
+      name: dsh-agent-code-tutor
+      # config:
+      #   port: 41890
+      #   token: 把工作区设置 tutorApi.conversationToken 的值抄到这里
