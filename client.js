@@ -122,22 +122,19 @@ window.__ModuleLoader__.load({
         const card = new CardController(ctx.configForms.get(SETTINGS_NS));
         ctx.effect(() => () => card.dispose(), 'code-tutor:form');
 
-        // 只在 Host 真的提供这个命名空间时才注册 —— 否则卸载后留个空壳
+        // 注册进「内置插件 → bundle 详情页」的配置区。
+        // key 必须是 **bundle 包名**;注册进 plugins.item 是官方设置页专用的,不算数。
         ctx.effect(
           () =>
-            ctx.configForms.whileServed([SETTINGS_NS], () =>
-              ctx.slots.inject('plugins.item', () =>
-                ctx.slots.register(
-                  {
-                    name: 'plugins.item',
-                    id: 'code-tutor',
-                    order: 40,
-                    label: () => t('title'),
-                    locale: LOCALE_NS,
-                    inject: () => card.inject(),
-                  },
-                  Card,
-                ),
+            ctx.slots.inject('plugins.bundle.config', () =>
+              ctx.slots.register(
+                {
+                  name: 'plugins.bundle.config',
+                  key: 'dsh-agent-code-tutor',
+                  locale: LOCALE_NS,
+                  inject: () => card.inject(),
+                },
+                Card,
               ),
             ),
           'code-tutor:page',
