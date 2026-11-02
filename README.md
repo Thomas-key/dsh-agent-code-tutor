@@ -63,21 +63,22 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 
 ## 配置
 
-端口和会话 token 必须和扩展那边一致,否则连不上。取值顺序(前面的赢):
+**DSH 设置页里能直接改** —— 插件导出了 `Config` schema,设置页会给这个插件渲染一张表单:
 
-1. `cordis.patch.yml` 里该条目的 `config: { port, token }`
+| 设置 | 说明 |
+|---|---|
+| `port` | 扩展监听的端口,要和编辑器设置 `tutorApi.port` 一致 |
+| `token` | 会话 token,要和 `tutorApi.conversationToken` 一致;**留空则自动从工作区里找** |
+
+取值优先级(前面的赢):
+
+1. DSH 设置页 / `cordis.patch.yml` 里的 `config`
 2. 环境变量 `EDITOR_API_PORT` / `EDITOR_API_TOKEN`
 3. 插件目录下的 `config.json`
-4. 默认端口 `41890`,token 空(空的话每个请求都会被拒)
+4. 自动发现:扫 cwd 及其直接子目录的 `.vscode/settings.json` 取 `tutorApi.conversationToken`
+5. 默认值:端口 `41890`,token 空(空的话每个请求都会被拒)
 
-```json
-// config.json(不提交,已 gitignore)
-{ "port": 41890, "token": "把工作区设置 tutorApi.conversationToken 抄过来" }
-```
-
-token 在编辑器的**工作区设置** `tutorApi.conversationToken` 里(扩展首次激活自动生成)。
-
-**端口被占用怎么办**:改扩展的 `tutorApi.port`,再改这边的 `port` —— 两边一致。
+> 空字符串一律当作"没配",所以设置页留空不会盖住环境变量和自动发现。
 
 ## 设计
 

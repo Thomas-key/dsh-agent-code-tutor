@@ -42,6 +42,44 @@ export const inject = ['tools', 'systemPrompt', 'agents', 'skills'];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * 加载 schemastery —— 设置页的表单是从它生成的。
+ *
+ * 为什么要兜底:以 `link:` 装进来的插件,真实路径在工作区里,往上找不到
+ * 任何 node_modules;而正常安装(github:/registry)时它就躺在 profile 的
+ * node_modules 下,一路向上就能解析到。两种都要能跑,所以先试裸导入,
+ * 失败再从 DSH 自己的安装位置借一个 require。
+ */
+async function loadSchema() {
+  try {
+    const mod = await import('@deepseek-ai/schemastery');
+    return mod.default ?? mod;
+  } catch {}
+  try {
+    const { createRequire } = await import('node:module');
+    const entry = process.argv[1];
+    if (!entry) return null;
+    return createRequire(fs.realpathSync(entry))('@deepseek-ai/schemastery');
+  } catch {
+    return null;
+  }
+}
+
+const Schema = await loadSchema();
+
+/**
+ * 插件配置:设置页读这个 schema 生成表单。
+ *
+ * 拿不到 schemastery 时导出 undefined —— 插件照常工作,只是设置页没有表单
+ * (开发时用 link: 安装就会这样,改 config.json 或环境变量即可)。
+ */
+export const Config = Schema
+  ? Schema.object({
+      port: Schema.number().default(DEFAULT_PORT).description('VS Code 扩展监听的端口,要和扩展设置 tutorApi.port 一致'),
+      token: Schema.string().default('').description('会话 token,要和编辑器工作区设置 tutorApi.conversationToken 一致;留空则自动从工作区里找'),
+    })
+  : undefined;
+
 /** skill 正文随包发:改这个文件不用改代码。 */
 const SKILL_BODY = fs.readFileSync(path.join(HERE, 'skills/editor-tutor/SKILL.md'), 'utf8');
 
@@ -95,11 +133,18 @@ function discoverToken(cwd) {
   return distinct.size === 1 ? found[0] : null;
 }
 
+/** 取第一个"真的有内容"的值 —— 空字符串、undefined 都算没配。 */
+function pick(...values) {
+  return values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+}
+
 function resolveConfig(passed) {
   const local = readJsonFile(path.join(HERE, 'config.json')) ?? {};
-  const port = Number(passed?.port ?? process.env.EDITOR_API_PORT ?? local.port) || DEFAULT_PORT;
+  // 注意 config 里的默认值(端口 41890 / token 空)不能盖住环境变量和 config.json,
+  // 所以用 pick 而不是 ?? —— 空字符串要当成"没配"。
+  const port = Number(pick(passed?.port, process.env.EDITOR_API_PORT, local.port)) || DEFAULT_PORT;
 
-  let token = String(passed?.token ?? process.env.EDITOR_API_TOKEN ?? local.token ?? '');
+  let token = String(pick(passed?.token, process.env.EDITOR_API_TOKEN, local.token) ?? '');
   let discoveredFrom = null;
   if (!token) {
     const found = discoverToken(process.cwd());
