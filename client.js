@@ -53,77 +53,49 @@ window.__ModuleLoader__.load({
       invalidNumber: 'Expected a number',
     };
 
-    /** 把 Host 侧的配置作用域桥接成这一页的分阶段表单。 */
-    class CardController {
-      constructor(scope) {
-        this.form = new SettingsFormModel(scope, [settingsNumberField('port'), settingsTextField('token')]);
-        this.store = this.form.bind(() => this.projection());
-      }
-
-      projection() {
-        return {
-          ...this.form.shell(),
-          port: this.form.field('port'),
-          token: this.form.field('token'),
-        };
-      }
-
-      /** 给槽注册用的接口:一个快照 hook + 表单动作。 */
-      inject() {
-        return { hooks: { codeTutorCard: this.store }, ...this.form.actions() };
-      }
-
-      dispose() {
-        this.form.dispose();
-      }
-    }
-
+    /**
+     * 最小卡片:先只保证**能渲染出来**。
+     *
+     * 用 props.form(Host 给的配置表)优先;没有就退回静态说明。
+     * 不碰任何未文档化的 hook —— 渲染抛错会让整张卡消失,那比没设置更糟。
+     */
     function Card(props) {
-      const { t } = props;
-      const state = props.useCodeTutorCard((snapshot) => snapshot);
-      if (props.view === 'summary') return t('description');
+      const t = typeof props?.t === 'function' ? props.t : (key) => key;
+      const view = props?.view ?? 'page';
+      if (view === 'summary') return t('description');
 
-      const labels = {
-        unavailable: t('unavailable'),
-        readOnly: t('readOnly'),
-        saveFailed: t('saveFailed'),
-        save: t('save'),
-        saving: t('saving'),
-      };
+      const form = props?.form;
+      const value = form?.value ?? form?.values ?? null;
+      const rows = [];
 
-      const field = (name, label, hint, numeric) =>
-        React.createElement(SettingsValueField, {
-          id: `plugin-config-code-tutor-${name}`,
-          label,
-          hint,
-          overriddenLabel: t('overridden'),
-          resetLabel: t('reset'),
-          ...(numeric ? { numeric: true, invalidLabel: t('invalidNumber') } : {}),
-          disabled: !state.writable,
-          ...state[name],
-          onEdit: (text) => props.edit(name, text),
-          onReset: () => props.resetField(name),
-        });
+      if (value && typeof value === 'object') {
+        rows.push(`端口:${value.port ?? '(默认 41890)'}`);
+        rows.push(`会话 token:${value.token ? '已设置' : '(空,自动发现)'}`);
+      } else {
+        rows.push('当前值请看插件目录下的 config.json,或环境变量 EDITOR_API_PORT / EDITOR_API_TOKEN。');
+      }
 
       return React.createElement(
-        SettingsForm,
-        { labels, state, onSave: props.save, onDiscard: props.discard },
-        field('port', t('port'), t('portHint'), true),
-        field('token', t('token'), t('tokenHint'), false),
+        'div',
+        { style: { padding: '10px 0', display: 'grid', gap: 6, fontSize: 13 } },
+        React.createElement('div', { style: { fontWeight: 600 } }, t('title')),
+        ...rows.map((line) => React.createElement('div', { key: line }, line)),
+        React.createElement(
+          'div',
+          { style: { opacity: 0.65, fontSize: 12, lineHeight: 1.5 } },
+          t('portHint'),
+          ' ',
+          t('tokenHint'),
+        ),
       );
     }
 
     return {
-      inject: ['slots', 'locale', 'configForms'],
+      inject: ['slots', 'locale'],
       apply(ctx) {
         const t = ctx.locale.bind(LOCALE_NS);
         ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh, en }), 'code-tutor:dictionary');
 
-        const card = new CardController(ctx.configForms.get(SETTINGS_NS));
-        ctx.effect(() => () => card.dispose(), 'code-tutor:form');
-
-        // 注册进「内置插件 → bundle 详情页」的配置区。
-        // key 必须是 **bundle 包名**;注册进 plugins.item 是官方设置页专用的,不算数。
         ctx.effect(
           () =>
             ctx.slots.inject('plugins.bundle.config', () =>
@@ -132,7 +104,6 @@ window.__ModuleLoader__.load({
                   name: 'plugins.bundle.config',
                   key: 'dsh-agent-code-tutor',
                   locale: LOCALE_NS,
-                  inject: () => card.inject(),
                 },
                 Card,
               ),
