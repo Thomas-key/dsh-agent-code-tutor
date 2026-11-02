@@ -38,9 +38,12 @@ import { fileURLToPath } from 'node:url';
 import { Bridge, DEFAULT_PORT } from './lib/bridge.js';
 
 export const name = 'dsh-agent-code-tutor';
-export const inject = ['tools', 'systemPrompt', 'agents'];
+export const inject = ['tools', 'systemPrompt', 'agents', 'skills'];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/** skill 正文随包发:改这个文件不用改代码。 */
+const SKILL_BODY = fs.readFileSync(path.join(HERE, 'skills/editor-tutor/SKILL.md'), 'utf8');
 
 /** 普通 op 的上限。写入/读取都在本地,30 秒足够。 */
 const OP_TIMEOUT_MS = 30000;
@@ -585,6 +588,23 @@ export function apply(ctx, config) {
         };
       }),
     'dsh-agent-code-tutor.approval',
+  );
+
+  // 随插件发一个 skill:它教模型"什么时候该指、什么时候该写"。
+  // 挂 skill 而不是只靠系统提示,是因为 skill 能被模型按需加载 —— 触发词写在 description 里。
+  ctx.effect(
+    () =>
+      ctx.skills.register({
+        name: 'editor-tutor',
+        description:
+          '在编辑器里边写边讲。适用:"这个文件为什么这么改""这段帮我读一下""哪里是关键""指给我看""教我做 X""边写边讲"。' +
+          '会让 agent 用 editor_point 在代码上标出来,而不是在对话框里复述代码。',
+        whenToUse:
+          '用户在看代码、学代码、想让 agent 指出问题或讲解某段代码时;或者要求 agent 一小步一小步往编辑器里写代码时。',
+        source: 'bundled',
+        content: SKILL_BODY,
+      }),
+    'dsh-agent-code-tutor.skill',
   );
 
   for (const tool of createTools(bridge)) {

@@ -11,10 +11,11 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "README.md",
+    "cordis.patch.yml",
     "index.js",
     "lib",
-    "cordis.patch.yml",
-    "README.md"
+    "skills"
   ],
   "keywords": [
     "dsh",
