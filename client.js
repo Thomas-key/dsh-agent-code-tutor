@@ -1,18 +1,16 @@
 /**
  * 设置页的客户端半 —— 往「插件」页里加一张配置卡片。
  *
- * 为什么必须有这一半:Host 只导出 Config schema 是不够的 —— 设置页的每一页
- * 都是插件自己的客户端模块注册进 `plugins.item` 槽渲染的,没有它就什么都不显示。
+ * 为什么必须有这一半:Host 只导出 Config schema 是不够的 —— 设置页里这一块
+ * 由插件自己的客户端模块注册进 `plugins.bundle.config`(按 bundle 包名)渲染。
  *
- * 卡片只在 Host 真的提供这个命名空间时才注册(`configForms.whileServed`),
- * 所以卸载插件后不会留下空壳。
+ * 这一版是**最小可用**:只保证能渲染、能读出当前值。不碰任何未文档化的
+ * hook —— 渲染抛错会让整张卡消失,那比没有设置更糟。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-agent-code-tutor',
   factory(require) {
     const React = require('react');
-    const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
-    const { SettingsFormModel, SettingsForm, SettingsValueField, settingsNumberField, settingsTextField } = primitives;
 
     /** 和 cordis.patch.yml 里的 row id 一致 —— 设置命名空间就是它。 */
     const SETTINGS_NS = 'dsh-agent-code-tutor';
