@@ -68,11 +68,47 @@ function readJsonFile(file) {
   }
 }
 
+/**
+ * 没人配置 token 时,自己去工作区里找。
+ *
+ * 扩展把 token 写在**它打开的那个文件夹**的 .vscode/settings.json 里。DSH 的 cwd
+ * 通常是这些文件夹的公共父目录,所以扫一遍直接子目录就够了。
+ *
+ * 找到多个不同的值时不猜 —— 猜错等于连错会话,宁可报错让人填。
+ */
+function discoverToken(cwd) {
+  const found = [];
+  const readFrom = (file) => {
+    const value = readJsonFile(file)?.['tutorApi.conversationToken'];
+    if (typeof value === 'string' && value.trim()) found.push({ token: value.trim(), file });
+  };
+  try {
+    readFrom(path.join(cwd, '.vscode/settings.json'));
+    for (const entry of fs.readdirSync(cwd, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      readFrom(path.join(cwd, entry.name, '.vscode/settings.json'));
+    }
+  } catch {
+    return null;
+  }
+  const distinct = new Map(found.map((item) => [item.token, item]));
+  return distinct.size === 1 ? found[0] : null;
+}
+
 function resolveConfig(passed) {
   const local = readJsonFile(path.join(HERE, 'config.json')) ?? {};
   const port = Number(passed?.port ?? process.env.EDITOR_API_PORT ?? local.port) || DEFAULT_PORT;
-  const token = String(passed?.token ?? process.env.EDITOR_API_TOKEN ?? local.token ?? '');
-  return { port, token };
+
+  let token = String(passed?.token ?? process.env.EDITOR_API_TOKEN ?? local.token ?? '');
+  let discoveredFrom = null;
+  if (!token) {
+    const found = discoverToken(process.cwd());
+    if (found) {
+      token = found.token;
+      discoveredFrom = found.file;
+    }
+  }
+  return { port, token, discoveredFrom };
 }
 
 // ── 系统提示 ────────────────────────────────────────────────
@@ -543,8 +579,12 @@ function wakeAgent(ctx, event) {
  * @param {{port?: number, token?: string}} [config]
  */
 export function apply(ctx, config) {
-  const { port, token } = resolveConfig(config);
+  const { port, token, discoveredFrom } = resolveConfig(config);
   const bridge = new Bridge({ port, token });
+
+  if (discoveredFrom) {
+    ctx.logger?.info?.(`[code-tutor] 会话 token 自动取自 ${discoveredFrom}`);
+  }
 
   if (!token) {
     ctx.logger?.warn(

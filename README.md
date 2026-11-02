@@ -6,13 +6,31 @@ https://github.com/Thomas-key/agent_code_tutor
 vscode端对应插件。
 
 把编辑器当成 agent 的**手和眼**。这边是 DSH 插件,另一头是
-[`agent_code_tutor`](../agent_code_tutor/) 那个 VS Code 扩展 —— 协议见
-[`agent_code_tutor/API.md`](../agent_code_tutor/API.md)。
+[agent_code_tutor](https://github.com/Thomas-key/agent_code_tutor) 那个 VS Code 扩展 ——
+协议见 [API.md](https://github.com/Thomas-key/agent_code_tutor/blob/main/API.md)。
 
 ```
 DSH(对话在这里)── editor_* 工具 ──▶ agent_code_tutor 扩展 ──▶ 编辑器
                 ◀── 推送:用户问了 agent 一句 ──┘
 ```
+
+## 安装
+
+推成 GitHub 仓库之后,三种方式都行:
+
+```
+dsh plugin add github:Thomas-key/dsh-agent-code-tutor
+dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
+```
+
+或者用 DSH 的插件管理面板,把仓库地址粘进去。
+
+**装完能直接用**,不用先配置 —— 端口默认 `41890`,会话 token 会自己从
+工作区里找(扫 cwd 及其直接子目录的 `.vscode/settings.json`,取
+`tutorApi.conversationToken`;找到多个不同的值就不猜,报错让你填)。
+
+前提是编辑器那边装了 [agent_code_tutor](https://github.com/Thomas-key/agent_code_tutor)
+扩展。
 
 ## 工具
 
