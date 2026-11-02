@@ -1,30 +1,32 @@
 /**
- * 设置页的客户端半 —— 往「插件」页里加一张配置卡片。
+ * 设置页的客户端半 —— 在设置左侧导航里加一个独立页。
  *
- * 为什么必须有这一半:Host 只导出 Config schema 是不够的 —— 设置页里这一块
- * 由插件自己的客户端模块注册进 `plugins.bundle.config`(按 bundle 包名)渲染。
+ * 为什么必须有这一半:Host 只导出 Config schema 不会自动生成页面。
+ * 设置里的每一页(费用、快照、状态文案、语音模式……)都是插件自己的客户端模块
+ * 注册进 `settings.section` 槽渲染的,没有它就什么都没有。
  *
- * 这一版是**最小可用**:只保证能渲染、能读出当前值。不碰任何未文档化的
- * hook —— 渲染抛错会让整张卡消失,那比没有设置更糟。
+ * 这一版做了容错:表单构建失败时退化成"只读说明页",而不是整块消失 ——
+ * 消失时用户和开发者都看不到任何线索,那是最难查的状态。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-agent-code-tutor',
   factory(require) {
     const React = require('react');
 
-    /** 和 cordis.patch.yml 里的 row id 一致 —— 设置命名空间就是它。 */
+    /** 设置命名空间 —— 和 cordis.patch.yml 里的 row id 一致。 */
     const SETTINGS_NS = 'dsh-agent-code-tutor';
     /** 本页自己的文案命名空间。 */
     const LOCALE_NS = 'settings.codeTutor';
 
     const zh = {
       title: '编辑器陪读',
-      description: '让 agent 看见并修改你的编辑器:指着代码讲、一小段一小段写,写完交还给你。',
+      description: '让 agent 看见并修改你的编辑器',
       port: '端口',
       portHint: 'VS Code 扩展监听的端口,要和编辑器设置 tutorApi.port 一致。默认 41890。',
       token: '会话 token',
       tokenHint: '要和编辑器工作区设置 tutorApi.conversationToken 一致。留空则自动从工作区里找。',
-      unavailable: '暂不可用',
+      unavailable: '这个页面暂时拿不到配置(设置服务不可用)。',
+      fallback: '当前可以在插件目录下的 config.json 里改 port / token,或设置环境变量 EDITOR_API_PORT / EDITOR_API_TOKEN。',
       readOnly: '只读',
       saveFailed: '保存失败',
       save: '保存',
@@ -36,12 +38,13 @@ window.__ModuleLoader__.load({
 
     const en = {
       title: 'Editor Tutor',
-      description: 'Let the agent see and edit your editor: point at code, write in small steps, and hand control back to you.',
+      description: 'Let the agent see and edit your editor',
       port: 'Port',
       portHint: 'The port the VS Code extension listens on. Must match the editor setting tutorApi.port. Default 41890.',
       token: 'Session token',
-      tokenHint: 'Must match the editor setting tutorApi.conversationToken. Leave empty to discover it from the workspace.',
-      unavailable: 'Unavailable',
+      tokenHint: 'Must match the editor setting tutorApi.conversationToken. Empty discovers it from the workspace.',
+      unavailable: 'This page cannot read its configuration right now (settings service unavailable).',
+      fallback: 'For now edit port / token in the plugin directory config.json, or set EDITOR_API_PORT / EDITOR_API_TOKEN.',
       readOnly: 'Read only',
       saveFailed: 'Save failed',
       save: 'Save',
@@ -51,41 +54,102 @@ window.__ModuleLoader__.load({
       invalidNumber: 'Expected a number',
     };
 
-    /**
-     * 最小卡片:先只保证**能渲染出来**。
-     *
-     * 用 props.form(Host 给的配置表)优先;没有就退回静态说明。
-     * 不碰任何未文档化的 hook —— 渲染抛错会让整张卡消失,那比没设置更糟。
-     */
-    function Card(props) {
-      const t = typeof props?.t === 'function' ? props.t : (key) => key;
-      const view = props?.view ?? 'page';
-      if (view === 'summary') return t('description');
-
-      const form = props?.form;
-      const value = form?.value ?? form?.values ?? null;
-      const rows = [];
-
-      if (value && typeof value === 'object') {
-        rows.push(`端口:${value.port ?? '(默认 41890)'}`);
-        rows.push(`会话 token:${value.token ? '已设置' : '(空,自动发现)'}`);
-      } else {
-        rows.push('当前值请看插件目录下的 config.json,或环境变量 EDITOR_API_PORT / EDITOR_API_TOKEN。');
-      }
-
-      return React.createElement(
-        'div',
-        { style: { padding: '10px 0', display: 'grid', gap: 6, fontSize: 13 } },
-        React.createElement('div', { style: { fontWeight: 600 } }, t('title')),
-        ...rows.map((line) => React.createElement('div', { key: line }, line)),
-        React.createElement(
+    /** 只读说明页 —— 表单构建失败时的兜底,保证页面一定存在。 */
+    function fallbackPage(t) {
+      return function Fallback() {
+        return React.createElement(
           'div',
-          { style: { opacity: 0.65, fontSize: 12, lineHeight: 1.5 } },
-          t('portHint'),
-          ' ',
-          t('tokenHint'),
-        ),
-      );
+          { style: { display: 'grid', gap: 8, fontSize: 13 } },
+          React.createElement('div', { style: { fontWeight: 600 } }, t('title')),
+          React.createElement('div', null, t('unavailable')),
+          React.createElement('div', { style: { opacity: 0.7, lineHeight: 1.6 } }, t('fallback')),
+        );
+      };
+    }
+
+    /**
+     * 构建真正的表单页。
+     *
+     * 任何一步对不上(设置服务缺失、表单模型 API 变化)都返回 undefined,
+     * 由调用方退到 fallbackPage。
+     */
+    function buildFormPage(ctx, t) {
+      try {
+        const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
+        const { SettingsFormModel, SettingsForm, SettingsValueField, settingsNumberField, settingsTextField } = primitives;
+        const configForms = ctx.get?.('configForms');
+        if (!configForms || typeof configForms.get !== 'function') return undefined;
+
+        const model = new SettingsFormModel(configForms.get(SETTINGS_NS), [
+          settingsNumberField('port'),
+          settingsTextField('token'),
+        ]);
+        const store = model.bind(() => ({
+          ...model.shell(),
+          port: model.field('port'),
+          token: model.field('token'),
+        }));
+        const actions = model.actions();
+        ctx.effect(() => () => model.dispose(), 'code-tutor:form');
+
+        const read = () => {
+          try {
+            if (typeof store.getSnapshot === 'function') return store.getSnapshot();
+            if (typeof store.get === 'function') return store.get();
+            return store.snapshot ?? null;
+          } catch {
+            return null;
+          }
+        };
+
+        function useSnapshot() {
+          const [snap, setSnap] = React.useState(read);
+          React.useEffect(() => {
+            if (typeof store.subscribe !== 'function') return undefined;
+            const unsubscribe = store.subscribe(() => setSnap(read()));
+            setSnap(read());
+            return unsubscribe;
+          }, []);
+          return snap;
+        }
+
+        return function SettingsPage() {
+          const state = useSnapshot();
+          if (!state) return React.createElement('div', { style: { opacity: 0.7 } }, t('unavailable'));
+
+          const labels = {
+            unavailable: t('unavailable'),
+            readOnly: t('readOnly'),
+            saveFailed: t('saveFailed'),
+            save: t('save'),
+            saving: t('saving'),
+          };
+
+          const field = (name, label, hint, numeric) =>
+            React.createElement(SettingsValueField, {
+              id: `code-tutor-${name}`,
+              label,
+              hint,
+              overriddenLabel: t('overridden'),
+              resetLabel: t('reset'),
+              ...(numeric ? { numeric: true, invalidLabel: t('invalidNumber') } : {}),
+              disabled: !state.writable,
+              ...state[name],
+              onEdit: (text) => actions.edit(name, text),
+              onReset: () => actions.resetField(name),
+            });
+
+          return React.createElement(
+            SettingsForm,
+            { labels, state, onSave: actions.save, onDiscard: actions.discard },
+            field('port', t('port'), t('portHint'), true),
+            field('token', t('token'), t('tokenHint'), false),
+          );
+        };
+      } catch (error) {
+        ctx.logger?.warn?.(`[code-tutor] 设置表单构建失败,退到只读页:${error?.message ?? error}`);
+        return undefined;
+      }
     }
 
     return {
@@ -94,16 +158,19 @@ window.__ModuleLoader__.load({
         const t = ctx.locale.bind(LOCALE_NS);
         ctx.effect(() => ctx.locale.register(LOCALE_NS, { zh, en }), 'code-tutor:dictionary');
 
+        const Page = buildFormPage(ctx, t) ?? fallbackPage(t);
+
         ctx.effect(
           () =>
-            ctx.slots.inject('plugins.bundle.config', () =>
+            ctx.slots.inject('settings.section', () =>
               ctx.slots.register(
                 {
-                  name: 'plugins.bundle.config',
-                  key: 'dsh-agent-code-tutor',
-                  locale: LOCALE_NS,
+                  name: 'settings.section',
+                  id: 'code-tutor',
+                  order: 100,
+                  label: () => t('title'),
                 },
-                Card,
+                Page,
               ),
             ),
           'code-tutor:page',
