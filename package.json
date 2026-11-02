@@ -7,13 +7,17 @@
   "exports": {
     ".": "./index.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
     "README.md",
     "cordis.patch.yml",
+    "icon.svg",
     "index.js",
     "lib",
+    "locale/*.json",
     "skills"
   ],
   "keywords": [
