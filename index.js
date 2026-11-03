@@ -297,7 +297,7 @@ const REPORT_OUTPUT = {
 
 const FILE_PROPERTY = {
   type: 'string',
-  description: '相对编辑器里打开的文件夹;省略 = 当前前台文件',
+  description: '相对编辑器里打开的文件夹的路径,例如 "src/ops.js"。**必须给** —— 工具不会替你猜前台文件',
 };
 
 /**
@@ -400,6 +400,7 @@ function createTools(bridge, tokenForSession) {
         from: { type: 'number', description: '起始行(从 1 开始),默认 1' },
         to: { type: 'number', description: '结束行(含),默认 from+199' },
       },
+      required: ['file'],
     },
     async execute(args, exec) {
       const response = await call(exec, 'read', { file: args.file, from: args.from, to: args.to });
@@ -447,7 +448,7 @@ function createTools(bridge, tokenForSession) {
           },
         },
       },
-      required: ['text'],
+      required: ['file', 'text'],
     },
     async execute(args, exec) {
       const at = args.at?.cursor ? 'cursor' : args.at?.line ? { line: args.at.line, character: args.at.character ?? 1 } : 'end';
@@ -479,7 +480,7 @@ function createTools(bridge, tokenForSession) {
         to: { type: 'number', description: '替换到第几行(含)' },
         character: { type: 'number', description: '起始行从第几个字符开始(从 1 开始),默认 1' },
       },
-      required: ['text'],
+      required: ['file', 'text'],
     },
     async execute(args, exec) {
       // 到"下一行的开头" = 这一行(含换行)的结尾。写成同一行的 character:1 是零长度范围,
@@ -530,7 +531,7 @@ function createTools(bridge, tokenForSession) {
           },
         },
       },
-      required: ['marks'],
+      required: ['file', 'marks'],
     },
     async execute(args, exec) {
       const file = args.file;
