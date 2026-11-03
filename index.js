@@ -75,8 +75,17 @@ const Schema = await loadSchema();
  */
 export const Config = Schema
   ? Schema.object({
-      port: Schema.number().default(DEFAULT_PORT).description('VS Code 扩展监听的端口,要和扩展设置 tutorApi.port 一致'),
-      token: Schema.string().default('').description('会话 token,要和编辑器工作区设置 tutorApi.conversationToken 一致;留空则自动从工作区里找'),
+      // 注意 .extra('volatile', true):DSH 的设置页只把**标了 volatile 的字段**
+      // 当成可配置项(dsh-settings 的 volatileForm 过滤),没有这个标记的字段
+      // 整条会被跳过 —— 页面上就表现为"设置服务不可用"。
+      port: Schema.number()
+        .default(DEFAULT_PORT)
+        .extra('volatile', true)
+        .description('VS Code 扩展监听的端口,要和扩展设置 tutorApi.port 一致'),
+      token: Schema.string()
+        .default('')
+        .extra('volatile', true)
+        .description('会话 token,要和编辑器工作区设置 tutorApi.conversationToken 一致;留空则自动从工作区里找'),
     })
   : undefined;
 
