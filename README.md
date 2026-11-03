@@ -101,7 +101,7 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 |---|---|
 | `port` | 扩展监听的端口,要和编辑器设置 `tutorApi.port` 一致 |
 | `token` | 会话 token,要和 `tutorApi.conversationToken` 一致;**留空则自动从工作区里找** |
-| `bindings` | **会话绑定表**:`会话id=token`,多条用分号分隔。收到哪个 token 的问话就送给对应会话 |
+| `bindings` | **会话绑定表**:在页面上点「添加」→ 从会话列表里选 → 填那块编辑器的 token。存下来是 `会话id=token;...` |
 
 取值优先级(前面的赢):
 
@@ -122,10 +122,17 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 
 一个插件可以同时管着多块编辑器、多个会话。用 `bindings` 把它们对上:
 
+设置页里的样子:
+
 ```
-bindings = "a1b2=0f3e9c; c4d5=6075a344"
-            ↑会话id ↑token    ↑会话id ↑token
+会话绑定
+  我的翻译器          e0d75dee   [删除]
+  b4f1c2…
+  [+ 添加]
 ```
+
+点「添加」会展开一行:**会话下拉框**(显示会话标题和 cwd,不用手打 id)+ token 输入框。
+存下去是 `a1b2=0f3e9c; c4d5=6075a344` 这样的字符串。
 
 之后:
 

@@ -5,38 +5,43 @@
  * 设置里的每一页(费用、快照、状态文案、语音模式……)都是插件自己的客户端模块
  * 注册进 `settings.section` 槽渲染的,没有它就什么都没有。
  *
- * 这一版做了容错:表单构建失败时退化成"只读说明页",而不是整块消失 ——
- * 消失时用户和开发者都看不到任何线索,那是最难查的状态。
+ * 页面内容:
+ *   端口           —— 一个数字输入
+ *   会话绑定       —— 列表:每行「会话标题 / token / 删除」,➕ 从会话列表里挑,不用手打 id
+ *
+ * 绑定表在配置里仍是一个字符串(`sessionId=token;...`),这里负责解析和回写 ——
+ * 用户看到的是列表,存下去的是那串东西。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-agent-code-tutor',
   factory(require) {
     const React = require('react');
 
-    /**
-     * 设置命名空间候选。
-     *
-     * patch 里的 row id 是 `dsh-agent-code-tutor`,而 Host 侧的 loader 入口 id
-     * 是 `include:dsh-agent-code-tutor` —— 这两者到底哪个是"设置命名空间",
-     * 取决于 configForms 的实现。两个都试,哪个 ready 用哪个,别猜。
-     */
+    /** 设置命名空间候选 —— row id 与 loader 入口 id,哪个 ready 用哪个。 */
     const SETTINGS_NS_CANDIDATES = ['dsh-agent-code-tutor', 'include:dsh-agent-code-tutor'];
-    /** 本页自己的文案命名空间。 */
     const LOCALE_NS = 'settings.codeTutor';
 
     const zh = {
       title: '编辑器陪读',
-      description: '让 agent 看见并修改你的编辑器',
       port: '端口',
       portHint: 'VS Code 扩展监听的端口,要和编辑器设置 tutorApi.port 一致。默认 41890。',
-      token: '会话 token',
-      tokenHint: '要和编辑器工作区设置 tutorApi.conversationToken 一致。留空则自动从工作区里找。',
-      bindingsLabel: '会话绑定',
+      bindingsTitle: '会话绑定',
       bindingsHint:
-        '格式「会话id=token」,多条用分号分隔,例如 a1b2=0f3e9c;c4d5=6075a344。' +
-        '收到哪个 token 的问话就送给对应会话;留空则只在"恰好一个活跃会话"时送达。',
+        '把编辑器工作区和 DSH 会话配对:选中一个会话、填上那块编辑器的 token。' +
+        '编辑器里问的话就会送到这里选的会话。',
+      add: '添加',
+      addTitle: '新增绑定',
+      pickSession: '选择会话',
+      pickPlaceholder: '— 选一个会话 —',
+      tokenLabel: 'token',
+      tokenPlaceholder: '编辑器设置 tutorApi.conversationToken 的值',
+      confirm: '添加',
+      cancel: '取消',
+      remove: '删除',
+      empty: '还没有绑定。点「添加」把某个会话和一块编辑器配起来。',
+      noSessions: '现在没有可选的会话。',
       unavailable: '这个页面暂时拿不到配置(设置服务不可用)。',
-      fallback: '当前可以在插件目录下的 config.json 里改 port / token,或设置环境变量 EDITOR_API_PORT / EDITOR_API_TOKEN。',
+      fallback: '当前可以在插件目录下的 config.json 里改 port / bindings,或设置环境变量 EDITOR_API_PORT / EDITOR_API_BINDINGS。',
       readOnly: '只读',
       saveFailed: '保存失败',
       save: '保存',
@@ -48,17 +53,25 @@ window.__ModuleLoader__.load({
 
     const en = {
       title: 'Editor Tutor',
-      description: 'Let the agent see and edit your editor',
       port: 'Port',
       portHint: 'The port the VS Code extension listens on. Must match the editor setting tutorApi.port. Default 41890.',
-      token: 'Session token',
-      tokenHint: 'Must match the editor setting tutorApi.conversationToken. Empty discovers it from the workspace.',
-      bindingsLabel: 'Session bindings',
+      bindingsTitle: 'Session bindings',
       bindingsHint:
-        'Format "sessionId=token", separate entries with semicolons, e.g. a1b2=0f3e9c;c4d5=6075a344. ' +
-        'A question carrying a token is delivered to its bound session; empty delivers only when exactly one session is active.',
+        'Pair an editor workspace with a DSH session: pick a session and fill in that editor window token. ' +
+        'Questions asked in the editor are delivered to the chosen session.',
+      add: 'Add',
+      addTitle: 'New binding',
+      pickSession: 'Session',
+      pickPlaceholder: '— pick a session —',
+      tokenLabel: 'token',
+      tokenPlaceholder: 'the editor setting tutorApi.conversationToken value',
+      confirm: 'Add',
+      cancel: 'Cancel',
+      remove: 'Remove',
+      empty: 'No bindings yet. Press Add to pair a session with an editor window.',
+      noSessions: 'There are no sessions to pick right now.',
       unavailable: 'This page cannot read its configuration right now (settings service unavailable).',
-      fallback: 'For now edit port / token in the plugin directory config.json, or set EDITOR_API_PORT / EDITOR_API_TOKEN.',
+      fallback: 'For now edit port / bindings in the plugin directory config.json, or set EDITOR_API_PORT / EDITOR_API_BINDINGS.',
       readOnly: 'Read only',
       saveFailed: 'Save failed',
       save: 'Save',
@@ -67,6 +80,24 @@ window.__ModuleLoader__.load({
       reset: 'Reset',
       invalidNumber: 'Expected a number',
     };
+
+    // ── 绑定表的解析 / 序列化(格式与 Host 侧 parseBindings 一致)──────────
+
+    function parseBindings(text) {
+      const entries = [];
+      for (const raw of String(text ?? '').split(/[\n;]/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        const match = /^([^\s=]+)\s*[=]?\s*([^\s=]+)$/.exec(line);
+        if (!match) continue;
+        entries.push({ sessionId: match[1], token: match[2] });
+      }
+      return entries;
+    }
+
+    function serializeBindings(entries) {
+      return entries.map((entry) => `${entry.sessionId}=${entry.token}`).join('; ');
+    }
 
     /** 只读说明页 —— 表单构建失败时的兜底,保证页面一定存在。 */
     function fallbackPage(t) {
@@ -81,12 +112,8 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /**
-     * 构建真正的表单页。
-     *
-     * 任何一步对不上(设置服务缺失、表单模型 API 变化)都返回 undefined,
-     * 由调用方退到 fallbackPage。
-     */
+    // ── 页面 ──────────────────────────────────────────────────────
+
     function buildFormPage(ctx, t) {
       try {
         const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
@@ -96,16 +123,12 @@ window.__ModuleLoader__.load({
 
         const candidates = SETTINGS_NS_CANDIDATES.map((ns) => {
           const scope = configForms.get(ns);
-          const model = new SettingsFormModel(scope, [
-          settingsNumberField('port'),
-          settingsTextField('token'),
-          settingsTextField('bindings'),
-        ]);
+          // bindings 仍是一个字符串字段 —— 自定义界面负责把它变成列表
+          const model = new SettingsFormModel(scope, [settingsNumberField('port'), settingsTextField('bindings')]);
           return { ns, scope, model, actions: model.actions() };
         });
         ctx.effect(() => () => candidates.forEach(({ model }) => model.dispose()), 'code-tutor:forms');
 
-        /** 取第一个 status 为 ready 的命名空间;都没有就返回 undefined。 */
         const pick = () => {
           for (const item of candidates) {
             try {
@@ -115,13 +138,41 @@ window.__ModuleLoader__.load({
           return undefined;
         };
 
-        /**
-         * 直接读 model,不用 bind() 出来的 store。
-         *
-         * bind() 的更新时机依赖它内部那套 observable,试过读不到值;
-         * 而 shell()/field() 永远是当前真相 —— 只要在改动后自己触发一次重渲染。
-         */
-        return function SettingsPage() {
+        const styles = {
+          wrap: { display: 'grid', gap: 10, fontSize: 13 },
+          head: { fontWeight: 600 },
+          hint: { opacity: 0.65, lineHeight: 1.6, fontSize: 12 },
+          row: {
+            display: 'grid',
+            gridTemplateColumns: '1fr minmax(0, 220px) auto',
+            gap: 8,
+            alignItems: 'center',
+            padding: '6px 0',
+            borderBottom: '1px solid rgba(128,128,128,0.18)',
+          },
+          sessionName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+          muted: { opacity: 0.6, fontSize: 11 },
+          input: {
+            background: 'transparent',
+            border: '1px solid rgba(128,128,128,0.35)',
+            borderRadius: 6,
+            padding: '4px 8px',
+            color: 'inherit',
+            font: 'inherit',
+            minWidth: 0,
+          },
+          button: {
+            background: 'transparent',
+            border: '1px solid rgba(128,128,128,0.35)',
+            borderRadius: 6,
+            padding: '4px 10px',
+            color: 'inherit',
+            font: 'inherit',
+            cursor: 'pointer',
+          },
+        };
+
+        return function SettingsPage(props) {
           const [, bump] = React.useState(0);
           const rerender = () => bump((value) => value + 1);
 
@@ -132,9 +183,27 @@ window.__ModuleLoader__.load({
             return () => unsubscribers.forEach((fn) => fn());
           }, []);
 
+          // 会话列表由宿主通过标准 props 提供:标题 + cwd,足够做选择器
+          const useSessions = props?.useSessions;
+          const sessions = useSessions
+            ? useSessions((state) =>
+                (state.ids ?? [])
+                  .map((id) => state.byId?.[id])
+                  .filter(Boolean)
+                  .map((session) => ({
+                    id: session.id,
+                    title: session.displayTitle ?? session.title ?? session.id,
+                    cwd: session.cwd ?? '',
+                  })),
+              )
+            : [];
+
+          const [adding, setAdding] = React.useState(false);
+          const [draftSession, setDraftSession] = React.useState('');
+          const [draftToken, setDraftToken] = React.useState('');
+
           const active = pick();
           if (!active) {
-            // 两个命名空间都不可用时,把真实状态写出来 —— 排查时这行比"不可用"有用得多
             let statuses = '';
             try {
               statuses = candidates
@@ -143,28 +212,128 @@ window.__ModuleLoader__.load({
             } catch {}
             return React.createElement(
               'div',
-              { style: { display: 'grid', gap: 8, fontSize: 13 } },
+              { style: styles.wrap },
               React.createElement('div', null, t('unavailable')),
-              React.createElement('div', { style: { opacity: 0.7, lineHeight: 1.6 } }, t('fallback')),
-              React.createElement('div', { style: { opacity: 0.45, fontSize: 11 } }, statuses),
+              React.createElement('div', { style: styles.hint }, t('fallback')),
+              React.createElement('div', { style: styles.muted }, statuses),
             );
           }
 
-          const model = active.model;
-          const actions = active.actions;
-          let shell;
-          try {
-            shell = model.shell();
-          } catch (error) {
-            return React.createElement('div', { style: { opacity: 0.7 } }, t('unavailable'));
-          }
+          const { model, actions } = active;
+          const shell = model.shell();
+          const entries = parseBindings(model.field('bindings').text);
+          const writable = shell.writable;
 
-          const state = {
-            ...shell,
-            port: model.field('port'),
-            token: model.field('token'),
-            bindings: model.field('bindings'),
+          const write = (next) => {
+            actions.edit('bindings', serializeBindings(next));
+            rerender();
           };
+
+          const titleOf = (sessionId) => sessions.find((session) => session.id === sessionId)?.title ?? sessionId;
+
+          const rows = entries.map((entry) =>
+            React.createElement(
+              'div',
+              { style: styles.row, key: entry.sessionId },
+              React.createElement(
+                'div',
+                { style: styles.sessionName, title: entry.sessionId },
+                titleOf(entry.sessionId),
+                React.createElement('div', { style: styles.muted }, entry.sessionId),
+              ),
+              React.createElement('div', { style: styles.muted }, entry.token),
+              React.createElement(
+                'button',
+                {
+                  type: 'button',
+                  style: styles.button,
+                  disabled: !writable,
+                  onClick: () => write(entries.filter((item) => item.sessionId !== entry.sessionId)),
+                },
+                t('remove'),
+              ),
+            ),
+          );
+
+          const addRow = adding
+            ? React.createElement(
+                'div',
+                { style: { ...styles.row, gridTemplateColumns: '1fr minmax(0, 220px) auto auto', paddingTop: 10 } },
+                React.createElement(
+                  'select',
+                  {
+                    style: styles.input,
+                    value: draftSession,
+                    onChange: (event) => setDraftSession(event.target.value),
+                  },
+                  React.createElement('option', { value: '' }, t('pickPlaceholder')),
+                  ...sessions.map((session) =>
+                    React.createElement('option', { key: session.id, value: session.id }, `${session.title}${session.cwd ? ` · ${session.cwd}` : ''}`),
+                  ),
+                ),
+                React.createElement('input', {
+                  style: styles.input,
+                  placeholder: t('tokenPlaceholder'),
+                  value: draftToken,
+                  onChange: (event) => setDraftToken(event.target.value),
+                }),
+                React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    style: styles.button,
+                    disabled: !draftSession || !draftToken.trim(),
+                    onClick: () => {
+                      write([...entries.filter((item) => item.sessionId !== draftSession), { sessionId: draftSession, token: draftToken.trim() }]);
+                      setAdding(false);
+                      setDraftSession('');
+                      setDraftToken('');
+                    },
+                  },
+                  t('confirm'),
+                ),
+                React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    style: styles.button,
+                    onClick: () => {
+                      setAdding(false);
+                      setDraftSession('');
+                      setDraftToken('');
+                    },
+                  },
+                  t('cancel'),
+                ),
+              )
+            : null;
+
+          const bindingsBlock = React.createElement(
+            'div',
+            { style: styles.wrap },
+            React.createElement('div', { style: styles.head }, t('bindingsTitle')),
+            React.createElement('div', { style: styles.hint }, t('bindingsHint')),
+            ...rows,
+            entries.length === 0 ? React.createElement('div', { style: styles.hint }, t('empty')) : null,
+            addRow,
+            adding
+              ? null
+              : React.createElement(
+                  'div',
+                  null,
+                  React.createElement(
+                    'button',
+                    {
+                      type: 'button',
+                      style: styles.button,
+                      disabled: !writable || sessions.length === 0,
+                      onClick: () => setAdding(true),
+                    },
+                    `+ ${t('add')}`,
+                  ),
+                  sessions.length === 0 ? React.createElement('span', { style: { ...styles.muted, marginLeft: 8 } }, t('noSessions')) : null,
+                ),
+          );
 
           const labels = {
             unavailable: t('unavailable'),
@@ -174,31 +343,31 @@ window.__ModuleLoader__.load({
             saving: t('saving'),
           };
 
-          const field = (name, label, hint, numeric) =>
-            React.createElement(SettingsValueField, {
-              id: `code-tutor-${name}`,
-              label,
-              hint,
-              overriddenLabel: t('overridden'),
-              resetLabel: t('reset'),
-              ...(numeric ? { numeric: true, invalidLabel: t('invalidNumber') } : {}),
-              disabled: !state.writable,
-              ...state[name],
-              onEdit: (text) => {
-                actions.edit(name, text);
-                rerender();
-              },
-              onReset: () => {
-                actions.resetField(name);
-                rerender();
-              },
-            });
+          const portField = React.createElement(SettingsValueField, {
+            id: 'code-tutor-port',
+            label: t('port'),
+            hint: t('portHint'),
+            overriddenLabel: t('overridden'),
+            resetLabel: t('reset'),
+            numeric: true,
+            invalidLabel: t('invalidNumber'),
+            disabled: !writable,
+            ...model.field('port'),
+            onEdit: (text) => {
+              actions.edit('port', text);
+              rerender();
+            },
+            onReset: () => {
+              actions.resetField('port');
+              rerender();
+            },
+          });
 
           return React.createElement(
             SettingsForm,
             {
               labels,
-              state,
+              state: shell,
               onSave: () => {
                 void actions.save();
                 rerender();
@@ -208,9 +377,8 @@ window.__ModuleLoader__.load({
                 rerender();
               },
             },
-            field('port', t('port'), t('portHint'), true),
-            field('token', t('token'), t('tokenHint'), false),
-            field('bindings', t('bindingsLabel'), t('bindingsHint'), false),
+            portField,
+            bindingsBlock,
           );
         };
       } catch (error) {

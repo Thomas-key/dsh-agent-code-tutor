@@ -26,7 +26,8 @@
  * 裸导入失败时会从 DSH 自己的安装位置借一个 require(见 loadSchema),
  * 两种安装方式(link: 与 registry/github)都能跑。
  *
- * 配置(端口 / 会话 token)按这个顺序取,前面的赢:
+ * 会话 token 不再单独配置 —— 每条会话绑定自带一个(token 标识工作区)。
+ * 没有绑定时,仍按下面的顺序兜底取一个"默认 token":
  *   1. DSH 设置页里的表单 / cordis.patch.yml 里该条目的 config
  *   2. 环境变量 EDITOR_API_PORT / EDITOR_API_TOKEN
  *   3. 插件目录下的 config.json
@@ -89,10 +90,6 @@ export const Config = Schema
         .default(DEFAULT_PORT)
         .volatile()
         .description('VS Code 扩展监听的端口,要和扩展设置 tutorApi.port 一致'),
-      token: Schema.string()
-        .default('')
-        .volatile()
-        .description('会话 token,要和编辑器工作区设置 tutorApi.conversationToken 一致;留空则自动从工作区里找'),
       bindings: Schema.string()
         .default('')
         .volatile()
