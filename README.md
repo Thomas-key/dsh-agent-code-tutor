@@ -101,6 +101,7 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 |---|---|
 | `port` | 扩展监听的端口,要和编辑器设置 `tutorApi.port` 一致 |
 | `token` | 会话 token,要和 `tutorApi.conversationToken` 一致;**留空则自动从工作区里找** |
+| `sessionId` | 要接收编辑器问话的**会话 id**。留空时只在"恰好一个活跃会话"时送达 |
 
 取值优先级(前面的赢):
 
@@ -111,6 +112,17 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 5. 默认值:端口 `41890`,token 空(空的话每个请求都会被拒)
 
 > 空字符串一律当作"没配",所以设置页留空不会盖住环境变量和自动发现。
+
+## token 和 sessionId 分别管什么
+
+| | 标识的是 | 谁维护 |
+|---|---|---|
+| `token` | **编辑器工作区** —— 这份 agent 配置属于哪个窗口 | 编辑器侧的 `tutorApi.conversationToken` |
+| `sessionId` | **会话** —— 编辑器里问的话该送给哪个对话 | DSH 的会话 id |
+
+**两个都填,通信目标就唯一了**:只要扩展在跑、那个会话还开着,编辑器里一句问话就能直达它。
+
+只填 `token` 会退到"恰好一个活跃会话"的启发式 —— 你关掉会话或同时开着两个,问话就会**静默丢失**(只有插件日志有一行 warn)。所以推荐把 `sessionId` 填上。
 
 ## 设计
 

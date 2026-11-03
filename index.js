@@ -93,6 +93,10 @@ export const Config = Schema
         .default('')
         .volatile()
         .description('会话 token,要和编辑器工作区设置 tutorApi.conversationToken 一致;留空则自动从工作区里找'),
+      sessionId: Schema.string()
+        .default('')
+        .volatile()
+        .description('要绑定的会话 id。填了之后,编辑器那边的问话只送给这个会话;留空则只在"恰好一个活跃会话"时才送达'),
     })
   : undefined;
 
@@ -167,7 +171,9 @@ function resolveConfig(passed) {
       discoveredFrom = found.file;
     }
   }
-  return { port, token, discoveredFrom };
+  const sessionId = String(pick(passed?.sessionId, process.env.EDITOR_API_SESSION, local.sessionId) ?? '');
+
+  return { port, token, sessionId, discoveredFrom };
 }
 
 // ── 系统提示 ────────────────────────────────────────────────
@@ -598,13 +604,33 @@ function makeUserMessage(text) {
  * 用 Agent.followup():它排一个普通跟进回合并唤醒驱动,这条消息成为那一回合唯一的
  * 用户消息。所以 DSH 那边看起来就是"用户发了一句话",和手动输入没有区别。
  */
-function wakeAgent(ctx, event) {
+function wakeAgent(ctx, event, sessionId) {
   const agents = ctx.agents;
-  const roots = typeof agents?.roots === 'function' ? agents.roots() : [];
-  if (roots.length !== 1) {
-    const reason = `需要恰好一个活动会话才能叫醒 agent,现在有 ${roots.length} 个`;
-    ctx.logger?.warn(`[code-tutor] ${reason}`);
-    return;
+
+  /**
+   * 目标会话:配置里绑了 sessionId 就只认它;没绑才退到"恰好一个活跃会话"。
+   *
+   * 为什么要绑:token 只说明"哪个编辑器工作区",不说明"哪个会话"。
+   * 不绑的话,人离开会话后再从编辑器里问,问题会被静默丢掉。
+   */
+  let target;
+  if (sessionId) {
+    target = typeof agents?.get === 'function' ? agents.get(sessionId) : undefined;
+    if (!target) {
+      ctx.logger?.warn(
+        `[code-tutor] 绑定的会话 ${sessionId} 现在不活跃 —— 这条问话没送达。` +
+          '要么在那个会话里继续,要么把设置里绑定的会话改成当前这个',
+      );
+      return;
+    }
+  } else {
+    const roots = typeof agents?.roots === 'function' ? agents.roots() : [];
+    if (roots.length !== 1) {
+      const reason = `需要恰好一个活动会话才能叫醒 agent,现在有 ${roots.length} 个;可以在设置里绑定会话 id`;
+      ctx.logger?.warn(`[code-tutor] ${reason}`);
+      return;
+    }
+    target = roots[0];
   }
 
   const parts = ['(来自 VS Code 编辑器)'];
@@ -620,7 +646,7 @@ function wakeAgent(ctx, event) {
   }
 
   try {
-    const agent = roots[0];
+    const agent = target;
     const message = makeUserMessage(parts.join('\n'));
     if (typeof agent.followup === 'function') agent.followup(message);
     else if (typeof agent.send === 'function') agent.send(message, 'next-turn', true);
@@ -638,7 +664,7 @@ function wakeAgent(ctx, event) {
  * @param {{port?: number, token?: string}} [config]
  */
 export function apply(ctx, config) {
-  const { port, token, discoveredFrom } = resolveConfig(config);
+  const { port, token, sessionId, discoveredFrom } = resolveConfig(config);
   const bridge = new Bridge({ port, token });
 
   if (discoveredFrom) {
@@ -654,7 +680,7 @@ export function apply(ctx, config) {
 
   // 反方向:人在状态栏点了「询问 agent」或「唤醒」,而 agent 没在等。
   bridge.onEvent((event) => {
-    if (event?.event === 'ask' || event?.event === 'confirm') wakeAgent(ctx, event);
+    if (event?.event === 'ask' || event?.event === 'confirm') wakeAgent(ctx, event, sessionId);
   });
 
   // 唤醒要靠一条常连接;编辑器晚起来也能自己重连。
