@@ -174,6 +174,22 @@ function parseBindings(text) {
   return { byToken, bySession };
 }
 
+/**
+ * 把配置值取成字符串。
+ *
+ * 正常情况下 config 里就是字符串;但 DSH 的 loader 有时会把标量包成对象
+ * (`{__jsExpr}` 之类的表达式包装),直接 String() 会得到 "[object Object]"。
+ */
+function textOf(value) {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    for (const key of ['__jsExpr', 'value', 'text', 'raw']) {
+      if (typeof value[key] === 'string') return value[key];
+    }
+  }
+  return value === undefined || value === null ? '' : String(value);
+}
+
 /** 取第一个"真的有内容"的值 —— 空字符串、undefined 都算没配。 */
 function pick(...values) {
   return values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
@@ -194,7 +210,7 @@ function resolveConfig(passed) {
       discoveredFrom = found.file;
     }
   }
-  const bindingsText = String(pick(passed?.bindings, process.env.EDITOR_API_BINDINGS, local.bindings) ?? '');
+  const bindingsText = textOf(pick(passed?.bindings, process.env.EDITOR_API_BINDINGS, local.bindings) ?? '');
 
   return { port, token, bindings: parseBindings(bindingsText), discoveredFrom };
 }
@@ -791,6 +807,13 @@ export function apply(ctx, config) {
       configType: typeof config,
       bindingsType: typeof config?.bindings,
       preview: String(config?.bindings ?? '(undefined)').slice(0, 80),
+      json: (() => {
+        try {
+          return JSON.stringify(config?.bindings).slice(0, 200);
+        } catch {
+          return '(无法序列化)';
+        }
+      })(),
       keys: config && typeof config === 'object' ? Object.keys(config) : [],
     },
   });
