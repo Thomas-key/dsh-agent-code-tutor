@@ -39,7 +39,8 @@ window.__ModuleLoader__.load({
       cancel: '取消',
       remove: '删除',
       empty: '还没有绑定。点「添加」把某个会话和一块编辑器配起来。',
-      noSessions: '现在没有可选的会话。',
+      noSessions: '没有可选的会话了(可能都绑定过了)。',
+      allBound: '所有会话都已绑定。',
       unavailable: '这个页面暂时拿不到配置(设置服务不可用)。',
       fallback: '当前可以在插件目录下的 config.json 里改 port / bindings,或设置环境变量 EDITOR_API_PORT / EDITOR_API_BINDINGS。',
       readOnly: '只读',
@@ -69,7 +70,8 @@ window.__ModuleLoader__.load({
       cancel: 'Cancel',
       remove: 'Remove',
       empty: 'No bindings yet. Press Add to pair a session with an editor window.',
-      noSessions: 'There are no sessions to pick right now.',
+      noSessions: 'No sessions left to pick (they may all be bound).',
+      allBound: 'Every session is already bound.',
       unavailable: 'This page cannot read its configuration right now (settings service unavailable).',
       fallback: 'For now edit port / bindings in the plugin directory config.json, or set EDITOR_API_PORT / EDITOR_API_BINDINGS.',
       readOnly: 'Read only',
@@ -276,6 +278,10 @@ window.__ModuleLoader__.load({
 
           const titleOf = (sessionId) => sessions.find((session) => session.id === sessionId)?.title ?? sessionId;
 
+          // 已经绑定过的会话不再出现在选择列表里 —— 同一个会话只该有一条绑定
+          const boundIds = new Set(entries.map((entry) => entry.sessionId));
+          const pickable = sessions.filter((session) => !boundIds.has(session.id));
+
           const rows = entries.map((entry) =>
             React.createElement(
               'div',
@@ -324,9 +330,9 @@ window.__ModuleLoader__.load({
                     ? React.createElement(
                         'div',
                         { style: styles.popover },
-                        sessions.length === 0
+                        pickable.length === 0
                           ? React.createElement('div', { style: styles.muted }, t('noSessions'))
-                          : sessions.map((session) =>
+                          : pickable.map((session) =>
                               React.createElement(
                                 'button',
                                 {
@@ -405,12 +411,12 @@ window.__ModuleLoader__.load({
                     {
                       type: 'button',
                       style: styles.button,
-                      disabled: !writable || sessions.length === 0,
+                      disabled: !writable || pickable.length === 0,
                       onClick: () => setAdding(true),
                     },
                     `+ ${t('add')}`,
                   ),
-                  sessions.length === 0 ? React.createElement('span', { style: { ...styles.muted, marginLeft: 8 } }, t('noSessions')) : null,
+                  pickable.length === 0 ? React.createElement('span', { style: { ...styles.muted, marginLeft: 8 } }, t('allBound')) : null,
                 ),
           );
 
