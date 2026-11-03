@@ -140,31 +140,48 @@ window.__ModuleLoader__.load({
           return undefined;
         };
 
+        /**
+         * 颜色一律走主题 token(CSS 变量 `--dsw-alias-*`),不写死。
+         *
+         * 第二个参数是兜底:万一某个部署没定义这个变量,界面还在,
+         * 只是退回中性灰 —— 而不是变成白底白字。
+         */
+        const TOKEN = {
+          overlayBg: 'var(--dsw-alias-bg-overlay, rgba(30,30,30,0.92))',
+          layerBg: 'var(--dsw-alias-bg-layer-2, transparent)',
+          border: 'var(--dsw-alias-border-l1, rgba(128,128,128,0.35))',
+          separator: 'var(--dsw-alias-separator-primary, rgba(128,128,128,0.18))',
+          label: 'var(--dsw-alias-label-primary, inherit)',
+          labelSecondary: 'var(--dsw-alias-label-secondary, inherit)',
+          selectedBg: 'var(--dsw-alias-interactive-bg-active, rgba(128,128,128,0.30))',
+          hoverBg: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.18))',
+        };
+
         const styles = {
-          wrap: { display: 'grid', gap: 10, fontSize: 13 },
+          wrap: { display: 'grid', gap: 10, fontSize: 13, color: TOKEN.label },
           head: { fontWeight: 600 },
-          hint: { opacity: 0.65, lineHeight: 1.6, fontSize: 12 },
+          hint: { color: TOKEN.labelSecondary, lineHeight: 1.6, fontSize: 12 },
           row: {
             display: 'grid',
             gridTemplateColumns: '1fr minmax(0, 220px) auto',
             gap: 8,
             alignItems: 'center',
             padding: '6px 0',
-            borderBottom: '1px solid rgba(128,128,128,0.18)',
+            borderBottom: `1px solid ${TOKEN.separator}`,
           },
           sessionName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-          muted: { opacity: 0.6, fontSize: 11 },
+          muted: { color: TOKEN.labelSecondary, fontSize: 11 },
           input: {
-            background: 'transparent',
-            border: '1px solid rgba(128,128,128,0.35)',
+            background: TOKEN.layerBg,
+            border: `1px solid ${TOKEN.border}`,
             borderRadius: 6,
             padding: '4px 8px',
-            color: 'inherit',
+            color: TOKEN.label,
             font: 'inherit',
             minWidth: 0,
           },
           pickerWrap: { position: 'relative', minWidth: 0 },
-          // 浮层:半透明 + 模糊。不写死深浅色 —— 深浅主题下都要能看清
+          // 浮层:用主题的"浮层背景"token,深浅主题都自动对
           popover: {
             position: 'absolute',
             top: 'calc(100% + 4px)',
@@ -178,10 +195,9 @@ window.__ModuleLoader__.load({
             padding: 4,
             zIndex: 50,
             borderRadius: 8,
-            border: '1px solid rgba(128,128,128,0.45)',
-            background: 'rgba(30,30,30,0.92)',
-            backdropFilter: 'blur(8px)',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            border: `1px solid ${TOKEN.border}`,
+            background: TOKEN.overlayBg,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.28)',
           },
           pickerItem: {
             textAlign: 'left',
@@ -189,7 +205,7 @@ window.__ModuleLoader__.load({
             borderRadius: 4,
             padding: '4px 6px',
             font: 'inherit',
-            color: 'inherit',
+            color: TOKEN.label,
             cursor: 'pointer',
             background: 'transparent',
             overflow: 'hidden',
@@ -198,10 +214,10 @@ window.__ModuleLoader__.load({
           },
           button: {
             background: 'transparent',
-            border: '1px solid rgba(128,128,128,0.35)',
+            border: `1px solid ${TOKEN.border}`,
             borderRadius: 6,
             padding: '4px 10px',
-            color: 'inherit',
+            color: TOKEN.label,
             font: 'inherit',
             cursor: 'pointer',
           },
@@ -341,7 +357,7 @@ window.__ModuleLoader__.load({
                                   title: session.id,
                                   style: {
                                     ...styles.pickerItem,
-                                    background: draftSession === session.id ? 'rgba(128,128,128,0.30)' : 'transparent',
+                                    background: draftSession === session.id ? TOKEN.selectedBg : 'transparent',
                                   },
                                   onClick: () => {
                                     setDraftSession(session.id);
