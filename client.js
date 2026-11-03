@@ -13,8 +13,14 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
 
-    /** 设置命名空间 —— 和 cordis.patch.yml 里的 row id 一致。 */
-    const SETTINGS_NS = 'dsh-agent-code-tutor';
+    /**
+     * 设置命名空间候选。
+     *
+     * patch 里的 row id 是 `dsh-agent-code-tutor`,而 Host 侧的 loader 入口 id
+     * 是 `include:dsh-agent-code-tutor` —— 这两者到底哪个是"设置命名空间",
+     * 取决于 configForms 的实现。两个都试,哪个 ready 用哪个,别猜。
+     */
+    const SETTINGS_NS_CANDIDATES = ['dsh-agent-code-tutor', 'include:dsh-agent-code-tutor'];
     /** 本页自己的文案命名空间。 */
     const LOCALE_NS = 'settings.codeTutor';
 
@@ -80,10 +86,22 @@ window.__ModuleLoader__.load({
         const configForms = ctx.get?.('configForms');
         if (!configForms || typeof configForms.get !== 'function') return undefined;
 
-        const scope = configForms.get(SETTINGS_NS);
-        const model = new SettingsFormModel(scope, [settingsNumberField('port'), settingsTextField('token')]);
-        const actions = model.actions();
-        ctx.effect(() => () => model.dispose(), 'code-tutor:form');
+        const candidates = SETTINGS_NS_CANDIDATES.map((ns) => {
+          const scope = configForms.get(ns);
+          const model = new SettingsFormModel(scope, [settingsNumberField('port'), settingsTextField('token')]);
+          return { ns, scope, model, actions: model.actions() };
+        });
+        ctx.effect(() => () => candidates.forEach(({ model }) => model.dispose()), 'code-tutor:forms');
+
+        /** 取第一个 status 为 ready 的命名空间;都没有就返回 undefined。 */
+        const pick = () => {
+          for (const item of candidates) {
+            try {
+              if (item.model.shell().available) return item;
+            } catch {}
+          }
+          return undefined;
+        };
 
         /**
          * 直接读 model,不用 bind() 出来的 store。
@@ -96,10 +114,32 @@ window.__ModuleLoader__.load({
           const rerender = () => bump((value) => value + 1);
 
           React.useEffect(() => {
-            if (typeof scope?.subscribe !== 'function') return undefined;
-            return scope.subscribe(() => rerender());
+            const unsubscribers = candidates
+              .map(({ scope }) => (typeof scope?.subscribe === 'function' ? scope.subscribe(() => rerender()) : undefined))
+              .filter(Boolean);
+            return () => unsubscribers.forEach((fn) => fn());
           }, []);
 
+          const active = pick();
+          if (!active) {
+            // 把实际状态写出来,省得下次再猜
+            let statuses = '';
+            try {
+              statuses = candidates
+                .map(({ ns, scope }) => `${ns}=${scope?.getSnapshot?.()?.status ?? '?'}`)
+                .join(' · ');
+            } catch {}
+            return React.createElement(
+              'div',
+              { style: { display: 'grid', gap: 8, fontSize: 13 } },
+              React.createElement('div', null, t('unavailable')),
+              React.createElement('div', { style: { opacity: 0.7, lineHeight: 1.6 } }, t('fallback')),
+              React.createElement('div', { style: { opacity: 0.45, fontSize: 11 } }, statuses),
+            );
+          }
+
+          const model = active.model;
+          const actions = active.actions;
           let shell;
           try {
             shell = model.shell();
@@ -112,15 +152,6 @@ window.__ModuleLoader__.load({
             port: model.field('port'),
             token: model.field('token'),
           };
-
-          if (!state.available) {
-            return React.createElement(
-              'div',
-              { style: { display: 'grid', gap: 8, fontSize: 13 } },
-              React.createElement('div', null, t('unavailable')),
-              React.createElement('div', { style: { opacity: 0.7, lineHeight: 1.6 } }, t('fallback')),
-            );
-          }
 
           const labels = {
             unavailable: t('unavailable'),
