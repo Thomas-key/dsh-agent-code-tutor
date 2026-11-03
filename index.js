@@ -606,7 +606,28 @@ function createTools(bridge, tokenForSession) {
     },
   });
 
-  return [ping, look, read, open, insert, replace, point, wait, confirmCreate];
+  const selftest = editorTool({
+    name: 'editor_selftest',
+    description: '诊断:报告插件当前看到的绑定表、默认 token 和调用方的会话 id。只在排查连通性问题时用。',
+    parameters: { type: 'object', additionalProperties: false, properties: {} },
+    async execute(_args, exec) {
+      const sessionId = exec?.agent?.id ?? null;
+      return {
+        report: JSON.stringify(
+          {
+            sessionId,
+            boundToken: sessionId ? (tokenForSession(sessionId) === token ? '(默认)' : '(由绑定提供)') : null,
+            bindings: [...bindings.bySession.entries()],
+            defaultToken: token ? '已设置' : '(空)',
+          },
+          null,
+          1,
+        ),
+      };
+    },
+  });
+
+  return [ping, look, read, open, insert, replace, point, wait, confirmCreate, selftest];
 }
 
 // ── 唤醒(推送 → 新的一轮)──────────────────────────────────
@@ -703,14 +724,6 @@ export function apply(ctx, config) {
   const { port, token, bindings, discoveredFrom } = resolveConfig(config);
   const bridge = new Bridge({ port, token });
 
-  // 诊断:插件这次 apply 拿到的绑定表和默认 token
-  try {
-    fs.appendFileSync(
-      '/tmp/code-tutor-token.log',
-      `${new Date().toISOString()} apply token=${token || '(空)'} bindings=${JSON.stringify([...bindings.bySession.entries()])}\n`,
-    );
-  } catch {}
-
   if (discoveredFrom) {
     ctx.logger?.info?.(`[code-tutor] 会话 token 自动取自 ${discoveredFrom}`);
   }
@@ -777,16 +790,7 @@ export function apply(ctx, config) {
   );
 
   /** 这个会话该用哪个工作区的 token:查绑定表,查不到用插件默认的。 */
-  const tokenForSession = (sessionId) => {
-    const bound = bindings.bySession.get(sessionId);
-    try {
-      fs.appendFileSync(
-        '/tmp/code-tutor-token.log',
-        `${new Date().toISOString()} call sessionId=${JSON.stringify(sessionId)} bound=${JSON.stringify(bound ?? null)} keys=${JSON.stringify([...bindings.bySession.keys()])}\n`,
-      );
-    } catch {}
-    return bound ?? token;
-  };
+  const tokenForSession = (sessionId) => bindings.bySession.get(sessionId) ?? token;
 
   for (const tool of createTools(bridge, tokenForSession)) {
     ctx.effect(() => ctx.tools.register(tool), `dsh-agent-code-tutor.tool.${tool.name}`);
