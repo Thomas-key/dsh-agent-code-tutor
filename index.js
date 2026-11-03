@@ -93,10 +93,13 @@ export const Config = Schema
         .default('')
         .volatile()
         .description('会话 token,要和编辑器工作区设置 tutorApi.conversationToken 一致;留空则自动从工作区里找'),
-      sessionId: Schema.string()
+      bindings: Schema.string()
         .default('')
         .volatile()
-        .description('要绑定的会话 id。填了之后,编辑器那边的问话只送给这个会话;留空则只在"恰好一个活跃会话"时才送达'),
+        .description(
+          '会话绑定:<会话id>=<token>,多条用分号分隔。收到带 token 的问话就送给对应会话;' +
+            '工具调用也会用该会话绑定的 token 去连。留空则退到"恰好一个活跃会话"',
+        ),
     })
   : undefined;
 
@@ -151,6 +154,29 @@ function discoverToken(cwd) {
   return distinct.size === 1 ? found[0] : null;
 }
 
+/**
+ * 解析绑定表:`<sessionId>=<token>`,换行或分号分隔,`#` 开头是注释。
+ *
+ * 也用分号,是因为设置页里的输入框是单行的 —— 多行输入在那边不容易写。
+ * 等号可以省略,用空格/Tab 分隔也认。
+ *
+ * @returns {{ byToken: Map<string,string>, bySession: Map<string,string> }}
+ */
+function parseBindings(text) {
+  const byToken = new Map();
+  const bySession = new Map();
+  for (const raw of String(text ?? '').split(/[\n;]/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = /^([^\s=]+)\s*[=]?\s*([^\s=]+)$/.exec(line);
+    if (!match) continue;
+    const [, sessionId, token] = match;
+    byToken.set(token, sessionId);
+    bySession.set(sessionId, token);
+  }
+  return { byToken, bySession };
+}
+
 /** 取第一个"真的有内容"的值 —— 空字符串、undefined 都算没配。 */
 function pick(...values) {
   return values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
@@ -171,9 +197,9 @@ function resolveConfig(passed) {
       discoveredFrom = found.file;
     }
   }
-  const sessionId = String(pick(passed?.sessionId, process.env.EDITOR_API_SESSION, local.sessionId) ?? '');
+  const bindingsText = String(pick(passed?.bindings, process.env.EDITOR_API_BINDINGS, local.bindings) ?? '');
 
-  return { port, token, sessionId, discoveredFrom };
+  return { port, token, bindings: parseBindings(bindingsText), discoveredFrom };
 }
 
 // ── 系统提示 ────────────────────────────────────────────────
@@ -294,10 +320,23 @@ function editorTool({ name: toolName, description, parameters, execute }) {
 
 // ── 工具实现 ────────────────────────────────────────────────
 
-function createTools(bridge) {
-  /** 调一次编辑器,拿整个信封。 */
-  const call = (exec, op, params, options = {}) =>
-    bridge.request(op, params, { signal: exec.signal, timeoutMs: OP_TIMEOUT_MS, ...options });
+function createTools(bridge, tokenForSession) {
+  /**
+   * 调一次编辑器,拿整个信封。
+   *
+   * token 按**发起这次调用的会话**挑:一个插件可能同时绑着多块编辑器工作区,
+   * 用错 token 就会被对面的扩展拒掉。
+   */
+  const call = (exec, op, params, options = {}) => {
+    const sessionId = exec?.agent?.id;
+    const boundToken = sessionId ? tokenForSession(sessionId) : undefined;
+    return bridge.request(op, params, {
+      signal: exec.signal,
+      ...(boundToken ? { token: boundToken } : {}),
+      timeoutMs: OP_TIMEOUT_MS,
+      ...options,
+    });
+  };
 
   /**
    * 写完就交棒 —— 由**工具**执行,不靠模型自觉。
@@ -308,7 +347,13 @@ function createTools(bridge) {
    * @returns {string} 交棒结果的描述
    */
   const handoff = async (exec) => {
-    const response = await bridge.request('wait', { timeoutMs: 0 }, { signal: exec.signal, timeoutMs: WAIT_FOREVER });
+    const sessionId = exec?.agent?.id;
+    const boundToken = sessionId ? tokenForSession(sessionId) : undefined;
+    const response = await bridge.request('wait', { timeoutMs: 0 }, {
+      signal: exec.signal,
+      ...(boundToken ? { token: boundToken } : {}),
+      timeoutMs: WAIT_FOREVER,
+    });
     const result = response.result ?? {};
     const extra = describeEvents(result.events);
     if (result.ended === 'abort') {
@@ -604,30 +649,39 @@ function makeUserMessage(text) {
  * 用 Agent.followup():它排一个普通跟进回合并唤醒驱动,这条消息成为那一回合唯一的
  * 用户消息。所以 DSH 那边看起来就是"用户发了一句话",和手动输入没有区别。
  */
-function wakeAgent(ctx, event, sessionId) {
+function wakeAgent(ctx, event, bindings) {
   const agents = ctx.agents;
 
   /**
-   * 目标会话:配置里绑了 sessionId 就只认它;没绑才退到"恰好一个活跃会话"。
+   * 目标会话:先按推送里的 `token` 查绑定表,查不到才退到"恰好一个活跃会话"。
    *
-   * 为什么要绑:token 只说明"哪个编辑器工作区",不说明"哪个会话"。
-   * 不绑的话,人离开会话后再从编辑器里问,问题会被静默丢掉。
+   * 为什么要 token:一个插件可能同时管着多块编辑器工作区。token 说明"这条问话
+   * 来自哪个工作区",绑定表再把工作区映射到会话 —— 这样多开也不会串台。
    */
+  const { byToken } = bindings;
+  const sourceToken = typeof event?.token === 'string' ? event.token : '';
+  const boundSessionId = sourceToken ? byToken.get(sourceToken) : undefined;
+
   let target;
-  if (sessionId) {
-    target = typeof agents?.get === 'function' ? agents.get(sessionId) : undefined;
+  if (boundSessionId) {
+    target = typeof agents?.get === 'function' ? agents.get(boundSessionId) : undefined;
     if (!target) {
       ctx.logger?.warn(
-        `[code-tutor] 绑定的会话 ${sessionId} 现在不活跃 —— 这条问话没送达。` +
-          '要么在那个会话里继续,要么把设置里绑定的会话改成当前这个',
+        `[code-tutor] token ${sourceToken} 绑定的会话 ${boundSessionId} 现在不活跃 —— 这条问话没送达`,
       );
       return;
     }
   } else {
+    if (sourceToken) {
+      ctx.logger?.warn(
+        `[code-tutor] token ${sourceToken} 没有绑定任何会话(设置里的 bindings) —— 退到"唯一活跃会话"`,
+      );
+    }
     const roots = typeof agents?.roots === 'function' ? agents.roots() : [];
     if (roots.length !== 1) {
-      const reason = `需要恰好一个活动会话才能叫醒 agent,现在有 ${roots.length} 个;可以在设置里绑定会话 id`;
-      ctx.logger?.warn(`[code-tutor] ${reason}`);
+      ctx.logger?.warn(
+        `[code-tutor] 无法确定该叫醒哪个会话(活跃 ${roots.length} 个)—— 建议在设置里给 token ${sourceToken || '(未知)'} 绑定会话`,
+      );
       return;
     }
     target = roots[0];
@@ -664,7 +718,7 @@ function wakeAgent(ctx, event, sessionId) {
  * @param {{port?: number, token?: string}} [config]
  */
 export function apply(ctx, config) {
-  const { port, token, sessionId, discoveredFrom } = resolveConfig(config);
+  const { port, token, bindings, discoveredFrom } = resolveConfig(config);
   const bridge = new Bridge({ port, token });
 
   if (discoveredFrom) {
@@ -680,7 +734,7 @@ export function apply(ctx, config) {
 
   // 反方向:人在状态栏点了「询问 agent」或「唤醒」,而 agent 没在等。
   bridge.onEvent((event) => {
-    if (event?.event === 'ask' || event?.event === 'confirm') wakeAgent(ctx, event, sessionId);
+    if (event?.event === 'ask' || event?.event === 'confirm') wakeAgent(ctx, event, bindings);
   });
 
   // 唤醒要靠一条常连接;编辑器晚起来也能自己重连。
@@ -732,7 +786,10 @@ export function apply(ctx, config) {
     'dsh-agent-code-tutor.skill',
   );
 
-  for (const tool of createTools(bridge)) {
+  /** 这个会话该用哪个工作区的 token:查绑定表,查不到用插件默认的。 */
+  const tokenForSession = (sessionId) => bindings.bySession.get(sessionId) ?? token;
+
+  for (const tool of createTools(bridge, tokenForSession)) {
     ctx.effect(() => ctx.tools.register(tool), `dsh-agent-code-tutor.tool.${tool.name}`);
   }
 

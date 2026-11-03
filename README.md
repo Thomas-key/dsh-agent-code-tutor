@@ -101,7 +101,7 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 |---|---|
 | `port` | 扩展监听的端口,要和编辑器设置 `tutorApi.port` 一致 |
 | `token` | 会话 token,要和 `tutorApi.conversationToken` 一致;**留空则自动从工作区里找** |
-| `sessionId` | 要接收编辑器问话的**会话 id**。留空时只在"恰好一个活跃会话"时送达 |
+| `bindings` | **会话绑定表**:`会话id=token`,多条用分号分隔。收到哪个 token 的问话就送给对应会话 |
 
 取值优先级(前面的赢):
 
@@ -113,16 +113,28 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 
 > 空字符串一律当作"没配",所以设置页留空不会盖住环境变量和自动发现。
 
-## token 和 sessionId 分别管什么
+## 多开会话:token ↔ 会话 的绑定
 
 | | 标识的是 | 谁维护 |
 |---|---|---|
-| `token` | **编辑器工作区** —— 这份 agent 配置属于哪个窗口 | 编辑器侧的 `tutorApi.conversationToken` |
-| `sessionId` | **会话** —— 编辑器里问的话该送给哪个对话 | DSH 的会话 id |
+| `token` | **一块编辑器工作区** —— 这份配置属于哪个编辑器窗口 | 编辑器侧的 `tutorApi.conversationToken` |
+| `sessionId` | **一个 DSH 会话** | DSH 的会话 id |
 
-**两个都填,通信目标就唯一了**:只要扩展在跑、那个会话还开着,编辑器里一句问话就能直达它。
+一个插件可以同时管着多块编辑器、多个会话。用 `bindings` 把它们对上:
 
-只填 `token` 会退到"恰好一个活跃会话"的启发式 —— 你关掉会话或同时开着两个,问话就会**静默丢失**(只有插件日志有一行 warn)。所以推荐把 `sessionId` 填上。
+```
+bindings = "a1b2=0f3e9c; c4d5=6075a344"
+            ↑会话id ↑token    ↑会话id ↑token
+```
+
+之后:
+
+- **编辑器 → agent**:推送里带着自己的 `token`,插件查表找到该送哪个会话 —— 多开不会串台
+- **agent → 编辑器**:工具调用按**发起它的会话**去取绑定的 token,自动连到对的编辑器
+- **查不到绑定**:退到"恰好一个活跃会话"的启发式;再不行就写日志说明没送达
+
+> `sessionId` 是 DSH 的会话 id(会话 URL 里的那串)。绑定之后,只要那个会话还开着,
+> 编辑器里问一句就能直达它 —— 不需要猜、也不会因为同时开着别的会话而丢消息。
 
 ## 设计
 

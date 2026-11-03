@@ -31,8 +31,10 @@ window.__ModuleLoader__.load({
       portHint: 'VS Code 扩展监听的端口,要和编辑器设置 tutorApi.port 一致。默认 41890。',
       token: '会话 token',
       tokenHint: '要和编辑器工作区设置 tutorApi.conversationToken 一致。留空则自动从工作区里找。',
-      sessionLabel: '绑定的会话',
-      sessionHint: '要接收编辑器问话的会话 id。留空则只在"恰好一个活跃会话"时才送达 —— 想稳定收到就填上。',
+      bindingsLabel: '会话绑定',
+      bindingsHint:
+        '格式「会话id=token」,多条用分号分隔,例如 a1b2=0f3e9c;c4d5=6075a344。' +
+        '收到哪个 token 的问话就送给对应会话;留空则只在"恰好一个活跃会话"时送达。',
       unavailable: '这个页面暂时拿不到配置(设置服务不可用)。',
       fallback: '当前可以在插件目录下的 config.json 里改 port / token,或设置环境变量 EDITOR_API_PORT / EDITOR_API_TOKEN。',
       readOnly: '只读',
@@ -51,8 +53,10 @@ window.__ModuleLoader__.load({
       portHint: 'The port the VS Code extension listens on. Must match the editor setting tutorApi.port. Default 41890.',
       token: 'Session token',
       tokenHint: 'Must match the editor setting tutorApi.conversationToken. Empty discovers it from the workspace.',
-      sessionLabel: 'Bound session',
-      sessionHint: 'Session id that receives questions from the editor. Empty delivers only when exactly one session is active.',
+      bindingsLabel: 'Session bindings',
+      bindingsHint:
+        'Format "sessionId=token", separate entries with semicolons, e.g. a1b2=0f3e9c;c4d5=6075a344. ' +
+        'A question carrying a token is delivered to its bound session; empty delivers only when exactly one session is active.',
       unavailable: 'This page cannot read its configuration right now (settings service unavailable).',
       fallback: 'For now edit port / token in the plugin directory config.json, or set EDITOR_API_PORT / EDITOR_API_TOKEN.',
       readOnly: 'Read only',
@@ -95,7 +99,7 @@ window.__ModuleLoader__.load({
           const model = new SettingsFormModel(scope, [
           settingsNumberField('port'),
           settingsTextField('token'),
-          settingsTextField('sessionId'),
+          settingsTextField('bindings'),
         ]);
           return { ns, scope, model, actions: model.actions() };
         });
@@ -159,7 +163,7 @@ window.__ModuleLoader__.load({
             ...shell,
             port: model.field('port'),
             token: model.field('token'),
-            sessionId: model.field('sessionId'),
+            bindings: model.field('bindings'),
           };
 
           const labels = {
@@ -206,7 +210,7 @@ window.__ModuleLoader__.load({
             },
             field('port', t('port'), t('portHint'), true),
             field('token', t('token'), t('tokenHint'), false),
-            field('sessionId', t('sessionLabel'), t('sessionHint'), false),
+            field('bindings', t('bindingsLabel'), t('bindingsHint'), false),
           );
         };
       } catch (error) {
