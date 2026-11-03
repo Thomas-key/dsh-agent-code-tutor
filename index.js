@@ -239,12 +239,13 @@ const RULES = `## 编辑器就是你的手和眼
 用户想看着代码学("教我写 X""陪我做 Y""边写边讲")时,用 editor_* 工具把编辑器当黑板。对话仍然在这里。
 
 · **写之前先 open**:写操作要求目标文件在前台,不然会被拒。这不是麻烦,是承诺 —— 你不在用户看不见的地方改代码。
-· **一次写一小段**(建议 ≤20 行)。写完就 editor_wait 交棒,用户按「继续」你才往下讲。写多了也照写,但返回里会提醒你 —— 那是教学节奏,不是性能限制。
-· **讲已有代码用 editor_point**,不要为了指一下就改代码。可以一次标好几段不连续的。
+· **一次写一小段**(建议 ≤20 行)。写操作**自带交棒**:写完就停下来等人点「继续」,不用再调 editor_wait。写多了会提醒你 —— 那是教学节奏,不是性能限制。
+· **讲已有代码用 editor_point**,不要为了指一下就改代码。可以一次标好几段不连续的。**指完同样会交棒** —— 人看清了,你再往下讲。
 · **读用 editor_read**,它读的是内存 buffer,含用户没保存的改动 —— 别用别的工具猜文件内容。
-· editor_wait 返回 ended:
-  - \`confirm\` —— 用户看完了,接着讲;
-  - \`abort\` —— 用户点了暂停,**这一拍的写入已经被撤回**(代码回到写之前)。别接着写,问一句"哪里不对"。
+· 交棒结果可能是:
+  - \`▶ 用户继续了\` —— 人看完了,接着讲;
+  - \`⏸ 用户点了暂停\` —— 写操作是**这一拍的写入已经被撤回**(代码回到写之前);editor_point 是标注擦掉、**代码没动**。两种都别接着往下,先问一句"哪里不对";
+  - \`你等的时候用户问了:\` —— 人一边看一边提问。**先回答它**,再继续原计划;别当它是无关的新消息。
 · 解释只说"为什么这样写",不说"这是什么语法"。
 · 普通改代码不要用这些工具:那会写进用户眼前的编辑器,而不是 DSH 工作区的文件。`;
 
@@ -328,6 +329,159 @@ const REPORT_OUTPUT = {
   render: (_args, value) => textBlocks(String(value?.report ?? '')),
 };
 
+/**
+ * 等人期间用户问的话。
+ *
+ * 扩展侧把它和 wait 的结果一起交回,不走推送、不开新回合 ——
+ * 因为它是针对**这一拍**的问题,该由这一拍的工具返回带回来。
+ */
+const ASKS_SCHEMA = {
+  type: 'array',
+  description: '用户在你等的时候问的话',
+  items: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      // 扩展是把 statusbar 队列里的消息**原样**交回来的,里面带着 event:"ask"。
+      // 不声明它会被 output 校验拒掉(实际踩过:整条工具调用直接报 invalid output)。
+      event: { type: 'string', description: '消息类型,固定是 ask' },
+      text: { type: 'string', description: '用户问的原文' },
+      file: { type: 'string', description: '问的是哪个文件' },
+      line: { type: 'number', description: '问的是第几行' },
+      quote: { type: 'string', description: '那一行(或选区)的源码' },
+    },
+    required: ['text'],
+  },
+};
+
+/** 把问话列表渲染成一段给模型看的文字。 */
+function describeAsks(asks) {
+  if (!Array.isArray(asks) || asks.length === 0) return '';
+  const lines = ['**你等的时候用户问了:**'];
+  for (const ask of asks) {
+    const where = ask?.line ? `${ask.file ?? '编辑器'} 第 ${ask.line} 行` : (ask?.file ?? '编辑器');
+    const quote = String(ask?.quote ?? '').trim();
+    lines.push(`- 在 ${where}${quote ? `(那段是 \`${quote.slice(0, 120)}\`)` : ''}`);
+    lines.push(`  问:${String(ask?.text ?? '').trim()}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * 写入类工具的返回。
+ *
+ * 为什么不是一句 `report` 了事:模型需要知道**落下之后世界变成什么样** ——
+ * 写进去的原文、被换掉的旧内容、文档版本。只有行数的话,它下一拍只能凭记忆,
+ * 一错就错一片。
+ *
+ * report 仍然保留:它是给人看的一句话(UI 上显示这行)。
+ */
+const WRITE_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      report: { type: 'string', description: '这次调用发生了什么' },
+      written: { type: 'string', description: '实际写进文档的文本(超过 40 行会截断)' },
+      removed: { type: 'string', description: '被换掉的旧文本(超过 40 行会截断)' },
+      version: { type: 'number', description: '写入之后的文档版本' },
+      dirty: { type: 'boolean', description: '写入之后是否还没落盘' },
+      handoff: { type: 'string', description: '交棒结果:用户点了继续还是暂停' },
+      asks: ASKS_SCHEMA,
+    },
+    required: ['report'],
+  },
+  render: (_args, value) => textBlocks(renderWrite(value)),
+};
+
+/** 把写入结果拼成给模型看的文本:结论在前,内容用代码块围住。 */
+function renderWrite(value) {
+  const parts = [String(value?.report ?? '')];
+  if (typeof value?.removed === 'string' && value.removed !== '') {
+    parts.push('被换掉的旧内容:\n```\n' + value.removed + '\n```');
+  }
+  if (typeof value?.written === 'string' && value.written !== '') {
+    parts.push('写进去的内容:\n```\n' + value.written + '\n```');
+  }
+  if (typeof value?.version === 'number') {
+    parts.push(`文档版本 v${value.version}${value.dirty ? '(未落盘)' : ''}`);
+  }
+  if (value?.handoff) parts.push(String(value.handoff));
+  const asks = describeAsks(value?.asks);
+  if (asks) parts.push(asks);
+  return parts.join('\n\n');
+}
+
+/** `editor_wait` 的返回:结论 + 等人期间的问话。 */
+const HANDOFF_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      report: { type: 'string', description: '交棒结果:用户点了继续还是暂停' },
+      asks: ASKS_SCHEMA,
+    },
+    required: ['report'],
+  },
+  render: (_args, value) =>
+    textBlocks([String(value?.report ?? ''), describeAsks(value?.asks)].filter(Boolean).join('\n\n')),
+};
+
+/**
+ * `editor_point` 的返回。
+ *
+ * 每段都带**首行源码**和**挂上去的那句话**。以前只回一个数字
+ * ("其中 3 处挂了注解"),模型下一轮引用这段代码只能靠记忆。
+ */
+const POINT_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      report: { type: 'string', description: '这次调用发生了什么' },
+      path: { type: 'string', description: '被指的文件(相对工作区)' },
+      marks: {
+        type: 'array',
+        description: '这次标出来的每一段',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            from: { type: 'number', description: '第一行(从 1 开始)' },
+            to: { type: 'number', description: '最后一行(含)' },
+            code: { type: 'string', description: '这一段第一行的源码' },
+            say: { type: 'string', description: '挂在这一段行尾的话' },
+          },
+          required: ['from'],
+        },
+      },
+      handoff: { type: 'string', description: '交棒结果:用户点了继续还是暂停' },
+      asks: ASKS_SCHEMA,
+    },
+    required: ['report'],
+  },
+  render: (_args, value) => textBlocks(renderPoint(value)),
+};
+
+/** 把"指了哪里"拼成一张小清单:行号 + 源码 + 注解。 */
+function renderPoint(value) {
+  const parts = [String(value?.report ?? '')];
+  const marks = Array.isArray(value?.marks) ? value.marks : [];
+  if (marks.length > 0) {
+    const lines = [];
+    for (const mark of marks) {
+      const span = mark.to && mark.to !== mark.from ? `L${mark.from}-${mark.to}` : `L${mark.from}`;
+      const code = String(mark.code ?? '').trimEnd();
+      lines.push(code ? `${span}: ${code}${mark.say ? `   ← ${mark.say}` : ''}` : `${span}${mark.say ? `   ← ${mark.say}` : ''}`);
+    }
+    parts.push(lines.join('\n'));
+  }
+  const asks = describeAsks(value?.asks);
+  if (asks) parts.push(asks);
+  if (value?.handoff) parts.push(String(value.handoff));
+  return parts.join('\n\n');
+}
+
 const FILE_PROPERTY = {
   type: 'string',
   description: '相对编辑器里打开的文件夹的路径,例如 "src/ops.js"。**必须给** —— 工具不会替你猜前台文件',
@@ -351,10 +505,10 @@ function assertSchema(node, at) {
   if (node.items) assertSchema(node.items, `${at}[]`);
 }
 
-function editorTool({ name: toolName, description, parameters, execute }) {
+function editorTool({ name: toolName, description, parameters, output = REPORT_OUTPUT, execute }) {
   assertSchema(parameters, `${toolName}.parameters`);
-  assertSchema(REPORT_OUTPUT.schema, `${toolName}.output`);
-  return { name: toolName, description, parameters, output: REPORT_OUTPUT, execute };
+  assertSchema(output.schema, `${toolName}.output`);
+  return { name: toolName, description, parameters, output, execute };
 }
 
 // ── 工具实现 ────────────────────────────────────────────────
@@ -378,14 +532,23 @@ function createTools(bridge, tokenForSession) {
   };
 
   /**
-   * 写完就交棒 —— 由**工具**执行,不靠模型自觉。
+   * 停下来交棒 —— 由**工具**执行,不靠模型自觉。
    *
-   * 为什么:模型完全可能写完一段接着写下一段,人还没读。把 wait 焊在写操作里,
+   * 为什么:模型完全可能写完一段接着写下一段,人还没读。把 wait 焊在工具里,
    * 它就没有"继续写"这个选项了 —— 只能停下来等人点继续。
    *
-   * @returns {string} 交棒结果的描述
+   * `wrote` 决定暂停时说什么:写操作是"撤回",指和等是"擦掉标注"。
+   * 不说清的话,模型会以为 `point` 也动了代码(实际踩过)。
+   *
+   * 返回 `{ text, asks }`:
+   *   · text 是交棒结论(继续了 / 暂停了)
+   *   · asks 是**等人期间用户问的话**,和这次等待绑在一起
+   *
+   * 为什么 asks 不走事件流、也不另开一回合:它是"针对这一拍"的问题,
+   * 该由这一拍的工具返回带回去。推成新回合就变成了聊天里一条孤立消息,
+   * 模型得自己猜它是从哪来的。
    */
-  const handoff = async (exec) => {
+  const handoff = async (exec, { wrote = true } = {}) => {
     const sessionId = exec?.agent?.id;
     const boundToken = sessionId ? tokenForSession(sessionId) : undefined;
     const response = await bridge.request('wait', { timeoutMs: 0 }, {
@@ -395,11 +558,17 @@ function createTools(bridge, tokenForSession) {
     });
     const result = response.result ?? {};
     const extra = describeEvents(result.events);
-    if (result.ended === 'abort') {
-      return `⏸ 用户点了暂停 —— **这一拍的写入已经被撤回**,代码回到写之前。\n\n先别接着写,问一句"哪里不对"。${extra}`;
-    }
-    if (result.ended === 'timeout') return `⏸ 等太久了,没有回应。${extra}`;
-    return `▶ 用户继续了。${extra}`;
+    const asks = Array.isArray(result.asks) ? result.asks : [];
+    const paused = wrote
+      ? `⏸ 用户点了暂停 —— **这一拍的写入已经被撤回**,代码回到写之前。\n\n先别接着写,问一句"哪里不对"。`
+      : `⏸ 用户点了暂停。刚才那些标注已经擦掉了(**代码一个字都没动**)。\n\n先别接着讲,问一句"哪里不对"。`;
+    const text =
+      result.ended === 'abort'
+        ? `${paused}${extra}`
+        : result.ended === 'timeout'
+          ? `⏸ 等太久了,没有回应。${extra}`
+          : `▶ 用户继续了。${extra}`;
+    return { text, asks };
   };
 
   const ping = editorTool({
@@ -462,6 +631,7 @@ function createTools(bridge, tokenForSession) {
 
   const insert = editorTool({
     name: 'editor_insert',
+    output: WRITE_OUTPUT,
     description:
       '在文件里插入一段文本。目标文件必须在前台(先 editor_open)。**写完会自动停下来等人点继续** —— 不用再调 editor_wait。教学场景一次别超过 20 行。',
     parameters: {
@@ -494,13 +664,21 @@ function createTools(bridge, tokenForSession) {
       const where = result.at ? `第 ${result.at.line} 行` : '末尾';
       const created = result.created ? '(新建文件)' : '';
       const warning = result.warning ? `\n\n⚠ ${result.warning}` : '';
-      const handoffReport = await handoff(exec);
-      return { report: `◆ 写入 ${result.path}${created} · 从${where}起 ${result.lines} 行${warning}\n\n${handoffReport}` };
+      const { text: handoffText, asks } = await handoff(exec);
+      return {
+        report: `◆ 写入 ${result.path}${created} · 从${where}起 ${result.lines} 行${warning}`,
+        ...(typeof result.written === 'string' ? { written: result.written } : {}),
+        ...(typeof result.version === 'number' ? { version: result.version } : {}),
+        ...(typeof result.dirty === 'boolean' ? { dirty: result.dirty } : {}),
+        handoff: handoffText,
+        ...(asks.length > 0 ? { asks } : {}),
+      };
     },
   });
 
   const replace = editorTool({
     name: 'editor_replace',
+    output: WRITE_OUTPUT,
     description:
       '替换文件里的一段(或整份)。行号从 1 开始,两端都含。目标文件必须在前台(先 editor_open)。**写完会自动停下来等人点继续** —— 不用再调 editor_wait。',
     parameters: {
@@ -533,17 +711,24 @@ function createTools(bridge, tokenForSession) {
       if (result.needConfirm) return { report: needConfirmReport(result.needConfirm, 'replace') };
 
       const warning = result.warning ? `\n\n⚠ ${result.warning}` : '';
-      const handoffReport = await handoff(exec);
+      const { text: handoffText, asks } = await handoff(exec);
       return {
-        report: `◆ 替换 ${result.path} · 第 ${result.from?.line}-${result.to?.line} 行(换掉 ${result.replacedLines} 行,写入 ${result.lines} 行)${warning}\n\n${handoffReport}`,
+        report: `◆ 替换 ${result.path} · 第 ${result.from?.line}-${result.to?.line} 行(换掉 ${result.replacedLines} 行,写入 ${result.lines} 行)${warning}`,
+        ...(typeof result.removed === 'string' ? { removed: result.removed } : {}),
+        ...(typeof result.written === 'string' ? { written: result.written } : {}),
+        ...(typeof result.version === 'number' ? { version: result.version } : {}),
+        ...(typeof result.dirty === 'boolean' ? { dirty: result.dirty } : {}),
+        handoff: handoffText,
+        ...(asks.length > 0 ? { asks } : {}),
       };
     },
   });
 
   const point = editorTool({
     name: 'editor_point',
+    output: POINT_OUTPUT,
     description:
-      '指给人看:高亮若干整行,每段可以在行尾挂一句话。**不改代码** —— 讲已有代码时用它,不要为了指一下就改文件。可以一次标好几段不连续的。',
+      '指给人看:高亮若干整行,每段可以在行尾挂一句话。**不改代码** —— 讲已有代码时用它,不要为了指一下就改文件。可以一次标好几段不连续的。**指完会自动停下等人点继续** —— 不用再调 editor_wait。',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -568,36 +753,65 @@ function createTools(bridge, tokenForSession) {
     },
     async execute(args, exec) {
       const file = args.file;
-      const marks = Array.isArray(args.marks) ? args.marks : [];
-      if (marks.length === 0) return { report: '没给 marks,什么都没标。' };
+      const input = Array.isArray(args.marks) ? args.marks : [];
+      if (input.length === 0) return { report: '没给 marks,什么都没标。' };
 
-      const ranges = marks.map((mark) => ({ fromLine: mark.from, toLine: mark.to ?? mark.from }));
+      const ranges = input.map((mark) => ({ fromLine: mark.from, toLine: mark.to ?? mark.from }));
       const highlighted = await call(exec, 'highlight', { file, ranges });
       const path = highlighted.result?.path ?? file ?? '当前文件';
+      // 扩展回的每段首行源码。旧版扩展没有 segments —— 退化成只报行号,不影响指认。
+      const segments = Array.isArray(highlighted.result?.segments) ? highlighted.result.segments : [];
 
       const notes = [];
-      for (const mark of marks) {
+      for (const mark of input) {
         const say = String(mark.say ?? '').trim();
         if (!say) continue;
         const noted = await call(exec, 'annotate', { file, line: mark.from, text: say });
         notes.push(noted.result?.line ?? mark.from);
       }
 
-      const span = marks.map((m) => (m.to && m.to !== m.from ? `${m.from}-${m.to}` : `${m.from}`)).join(', ');
+      // `segments` 和输入的 `ranges` 是**一一对应**的(扩展按传入顺序 map 出来的)。
+      // 所以按下标取,不能按行号找:行号越界时扩展会夹到文档末尾,
+      // 那时输行号找不到对应的段,code 会丢,还会把没发生的行号报给模型。
+      const marked = input.map((mark, index) => {
+        const segment = segments[index];
+        const from = Number(segment?.from ?? mark.from) || 1;
+        const to = Number(segment?.to ?? mark.to ?? mark.from) || from;
+        const say = String(mark.say ?? '').trim();
+        return {
+          from,
+          to,
+          ...(segment?.code ? { code: segment.code } : {}),
+          ...(say ? { say } : {}),
+        };
+      });
+
+      // 用**实际生效**的行号,不是用户传的 —— 越界夹回来之后要如实报
+      const span = marked.map((m) => (m.to !== m.from ? `${m.from}-${m.to}` : `${m.from}`)).join(', ');
+      // 指完也交棒。为什么:讲代码时"指出来"和"讲"是两拍,
+      // 人得先看清你指的是哪一段。不交棒的话模型会一路讲下去,
+      // 等人反应过来,浮层已经被下一段覆盖了。
+      const { text: handoffText, asks } = await handoff(exec, { wrote: false });
       return {
         report: `◆ 指了 ${path} 第 ${span} 行${notes.length > 0 ? `,其中 ${notes.length} 处挂了注解` : ''}(没改任何代码)`,
+        path,
+        marks: marked,
+        handoff: handoffText,
+        ...(asks.length > 0 ? { asks } : {}),
       };
     },
   });
 
   const wait = editorTool({
     name: 'editor_wait',
+    output: HANDOFF_OUTPUT,
     description:
-      '交棒:停下来等用户点「继续」或「暂停」。**写操作(editor_insert / editor_replace / editor_confirm_create)已经自带交棒,不用再调这个**;它用于指完(editor_point)之后,或者只想等一会儿的时候。只被那两个按钮唤醒,打字和切文件都不算。',
+      '交棒:停下来等用户点「继续」或「暂停」,同时带回人在这期间问的话。**写操作和 editor_point 都已自带交棒,不需要再调它**;它只在"读完/看完后想停一下"时用。只被那两个按钮唤醒,打字和切文件都不算。',
     parameters: { type: 'object', additionalProperties: false, properties: {} },
     async execute(_args, exec) {
       // 和写操作内部用的是同一个交棒实现 —— 文案与语义只有一处
-      return { report: await handoff(exec) };
+      const { text, asks } = await handoff(exec, { wrote: false });
+      return { report: text, ...(asks.length > 0 ? { asks } : {}) };
     },
   });
 
@@ -609,6 +823,7 @@ function createTools(bridge, tokenForSession) {
    */
   const confirmCreate = editorTool({
     name: 'editor_confirm_create',
+    output: WRITE_OUTPUT,
     description:
       '确认新建文件。editor_insert / editor_replace 返回 needConfirm 之后调它。**它会弹窗让用户批准**,批准后写入并**自动停下等人点继续**。',
     parameters: {
@@ -632,9 +847,14 @@ function createTools(bridge, tokenForSession) {
       if (result.needConfirm) {
         return { report: `◆ 还是没建:token 可能过期了(${result.needConfirm.expiresIn} 秒有效)。重新发起写入再确认。` };
       }
-      const handoffReport = await handoff(exec);
+      const { text: handoffText, asks } = await handoff(exec);
       return {
-        report: `◆ 已新建并写入 ${result.path} · ${result.lines ?? 0} 行${result.warning ? `\n\n⚠ ${result.warning}` : ''}\n\n${handoffReport}`,
+        report: `◆ 已新建并写入 ${result.path} · ${result.lines ?? 0} 行${result.warning ? `\n\n⚠ ${result.warning}` : ''}`,
+        ...(typeof result.written === 'string' ? { written: result.written } : {}),
+        ...(typeof result.version === 'number' ? { version: result.version } : {}),
+        ...(typeof result.dirty === 'boolean' ? { dirty: result.dirty } : {}),
+        handoff: handoffText,
+        ...(asks.length > 0 ? { asks } : {}),
       };
     },
   });

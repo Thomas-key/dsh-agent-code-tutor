@@ -43,8 +43,11 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 | `editor_insert` | 插一段文本。**写完自动交棒**等人点继续 |
 | `editor_replace` | 替换一段或整份。**写完自动交棒** |
 | `editor_confirm_create` | 确认新建文件。**会弹窗问人**,批准后写入并自动交棒 |
-| `editor_point` | 指:高亮若干段 + 行尾注解,**不改代码、不停** |
-| `editor_wait` | 只想停下来时用(比如指完之后)。写操作已自带交棒,不用再调 |
+| `editor_point` | 指:高亮若干段 + 行尾注解。**不改代码,但会停下来等你** —— 指出来和往下讲是两拍 |
+| `editor_wait` | 只想停下来时用(比如 read 之后)。写操作和 `editor_point` 都已自带交棒,不用再调 |
+
+**交棒会带回两样东西**:结论(继续/暂停)和 `asks` —— 人一边看一边问的话。
+`asks` 是**针对这一拍**的问题,不是一条无关的新消息:先回答它,再继续原计划。
 
 **落盘(save)和清浮层(clear)没有开放给 agent** —— 存不存、擦不擦由人决定。
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-code-tutor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "把编辑器当手和眼:editor_* 工具接 agent_code_tutor 的 VS Code 扩展。",
   "main": "index.js",
