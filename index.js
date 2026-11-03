@@ -703,6 +703,14 @@ export function apply(ctx, config) {
   const { port, token, bindings, discoveredFrom } = resolveConfig(config);
   const bridge = new Bridge({ port, token });
 
+  // 诊断:插件这次 apply 拿到的绑定表和默认 token
+  try {
+    fs.appendFileSync(
+      '/tmp/code-tutor-token.log',
+      `${new Date().toISOString()} apply token=${token || '(空)'} bindings=${JSON.stringify([...bindings.bySession.entries()])}\n`,
+    );
+  } catch {}
+
   if (discoveredFrom) {
     ctx.logger?.info?.(`[code-tutor] 会话 token 自动取自 ${discoveredFrom}`);
   }
@@ -769,7 +777,16 @@ export function apply(ctx, config) {
   );
 
   /** 这个会话该用哪个工作区的 token:查绑定表,查不到用插件默认的。 */
-  const tokenForSession = (sessionId) => bindings.bySession.get(sessionId) ?? token;
+  const tokenForSession = (sessionId) => {
+    const bound = bindings.bySession.get(sessionId);
+    try {
+      fs.appendFileSync(
+        '/tmp/code-tutor-token.log',
+        `${new Date().toISOString()} call sessionId=${JSON.stringify(sessionId)} bound=${JSON.stringify(bound ?? null)} keys=${JSON.stringify([...bindings.bySession.keys()])}\n`,
+      );
+    } catch {}
+    return bound ?? token;
+  };
 
   for (const tool of createTools(bridge, tokenForSession)) {
     ctx.effect(() => ctx.tools.register(tool), `dsh-agent-code-tutor.tool.${tool.name}`);
