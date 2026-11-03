@@ -80,42 +80,47 @@ window.__ModuleLoader__.load({
         const configForms = ctx.get?.('configForms');
         if (!configForms || typeof configForms.get !== 'function') return undefined;
 
-        const model = new SettingsFormModel(configForms.get(SETTINGS_NS), [
-          settingsNumberField('port'),
-          settingsTextField('token'),
-        ]);
-        const store = model.bind(() => ({
-          ...model.shell(),
-          port: model.field('port'),
-          token: model.field('token'),
-        }));
+        const scope = configForms.get(SETTINGS_NS);
+        const model = new SettingsFormModel(scope, [settingsNumberField('port'), settingsTextField('token')]);
         const actions = model.actions();
         ctx.effect(() => () => model.dispose(), 'code-tutor:form');
 
-        const read = () => {
-          try {
-            if (typeof store.getSnapshot === 'function') return store.getSnapshot();
-            if (typeof store.get === 'function') return store.get();
-            return store.snapshot ?? null;
-          } catch {
-            return null;
-          }
-        };
-
-        function useSnapshot() {
-          const [snap, setSnap] = React.useState(read);
-          React.useEffect(() => {
-            if (typeof store.subscribe !== 'function') return undefined;
-            const unsubscribe = store.subscribe(() => setSnap(read()));
-            setSnap(read());
-            return unsubscribe;
-          }, []);
-          return snap;
-        }
-
+        /**
+         * 直接读 model,不用 bind() 出来的 store。
+         *
+         * bind() 的更新时机依赖它内部那套 observable,试过读不到值;
+         * 而 shell()/field() 永远是当前真相 —— 只要在改动后自己触发一次重渲染。
+         */
         return function SettingsPage() {
-          const state = useSnapshot();
-          if (!state) return React.createElement('div', { style: { opacity: 0.7 } }, t('unavailable'));
+          const [, bump] = React.useState(0);
+          const rerender = () => bump((value) => value + 1);
+
+          React.useEffect(() => {
+            if (typeof scope?.subscribe !== 'function') return undefined;
+            return scope.subscribe(() => rerender());
+          }, []);
+
+          let shell;
+          try {
+            shell = model.shell();
+          } catch (error) {
+            return React.createElement('div', { style: { opacity: 0.7 } }, t('unavailable'));
+          }
+
+          const state = {
+            ...shell,
+            port: model.field('port'),
+            token: model.field('token'),
+          };
+
+          if (!state.available) {
+            return React.createElement(
+              'div',
+              { style: { display: 'grid', gap: 8, fontSize: 13 } },
+              React.createElement('div', null, t('unavailable')),
+              React.createElement('div', { style: { opacity: 0.7, lineHeight: 1.6 } }, t('fallback')),
+            );
+          }
 
           const labels = {
             unavailable: t('unavailable'),
@@ -135,13 +140,30 @@ window.__ModuleLoader__.load({
               ...(numeric ? { numeric: true, invalidLabel: t('invalidNumber') } : {}),
               disabled: !state.writable,
               ...state[name],
-              onEdit: (text) => actions.edit(name, text),
-              onReset: () => actions.resetField(name),
+              onEdit: (text) => {
+                actions.edit(name, text);
+                rerender();
+              },
+              onReset: () => {
+                actions.resetField(name);
+                rerender();
+              },
             });
 
           return React.createElement(
             SettingsForm,
-            { labels, state, onSave: actions.save, onDiscard: actions.discard },
+            {
+              labels,
+              state,
+              onSave: () => {
+                void actions.save();
+                rerender();
+              },
+              onDiscard: () => {
+                actions.discard();
+                rerender();
+              },
+            },
             field('port', t('port'), t('portHint'), true),
             field('token', t('token'), t('tokenHint'), false),
           );
