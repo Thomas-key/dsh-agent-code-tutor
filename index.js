@@ -786,6 +786,13 @@ export function apply(ctx, config) {
     bindings: [...bindings.bySession.entries()],
     boundToThisSession: sessionId ? (bindings.bySession.get(sessionId) ?? null) : null,
     defaultToken: token ? `${token.slice(0, 4)}…` : '(空)',
+    // 原始形状:插件 apply 时拿到的 config.bindings 到底是什么类型
+    raw: {
+      configType: typeof config,
+      bindingsType: typeof config?.bindings,
+      preview: String(config?.bindings ?? '(undefined)').slice(0, 80),
+      keys: config && typeof config === 'object' ? Object.keys(config) : [],
+    },
   });
 
   for (const tool of createTools(bridge, tokenForSession, probe)) {
