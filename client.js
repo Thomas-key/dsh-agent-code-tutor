@@ -161,16 +161,25 @@ window.__ModuleLoader__.load({
             font: 'inherit',
             minWidth: 0,
           },
-          picker: {
-            maxHeight: 180,
+          pickerWrap: { position: 'relative', minWidth: 0 },
+          // 浮层:半透明 + 模糊。不写死深浅色 —— 深浅主题下都要能看清
+          popover: {
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            right: 0,
+            minWidth: 280,
+            maxHeight: 240,
             overflowY: 'auto',
-            border: '1px solid rgba(128,128,128,0.35)',
-            borderRadius: 6,
-            padding: 4,
             display: 'grid',
             gap: 2,
-            minWidth: 0,
-            background: 'rgba(128,128,128,0.10)',
+            padding: 4,
+            zIndex: 50,
+            borderRadius: 8,
+            border: '1px solid rgba(128,128,128,0.45)',
+            background: 'rgba(30,30,30,0.92)',
+            backdropFilter: 'blur(8px)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
           },
           pickerItem: {
             textAlign: 'left',
@@ -225,6 +234,18 @@ window.__ModuleLoader__.load({
           const [adding, setAdding] = React.useState(false);
           const [draftSession, setDraftSession] = React.useState('');
           const [draftToken, setDraftToken] = React.useState('');
+          const [pickerOpen, setPickerOpen] = React.useState(false);
+          const pickerRef = React.useRef(null);
+
+          // 点外面收起浮层 —— 浮层盖在别的控件上时必须有这个
+          React.useEffect(() => {
+            if (!pickerOpen) return undefined;
+            const onDown = (event) => {
+              if (!pickerRef.current?.contains?.(event.target)) setPickerOpen(false);
+            };
+            document.addEventListener('mousedown', onDown);
+            return () => document.removeEventListener('mousedown', onDown);
+          }, [pickerOpen]);
 
           const active = pick();
           if (!active) {
@@ -283,29 +304,49 @@ window.__ModuleLoader__.load({
             ? React.createElement(
                 'div',
                 { style: { ...styles.row, gridTemplateColumns: '1fr minmax(0, 220px) auto auto', paddingTop: 10 } },
-                // 自绘列表而不是 <select>:原生下拉弹层由浏览器绘制,不跟主题走 ——
-                // 深色主题下会变成白底白字。自己画的一行一个按钮,颜色永远和页面一致。
+                // 按钮 + 浮层。不用 <select>:原生弹层由浏览器绘制,不跟主题走(深色下白底白字);
+                // 也不用常驻展开的列表 —— 那样会把下面的控件挤走。
                 React.createElement(
                   'div',
-                  { style: styles.picker },
-                  sessions.length === 0
-                    ? React.createElement('div', { style: styles.muted }, t('noSessions'))
-                    : sessions.map((session) =>
-                        React.createElement(
-                          'button',
-                          {
-                            type: 'button',
-                            key: session.id,
-                            title: session.id,
-                            style: {
-                              ...styles.pickerItem,
-                              background: draftSession === session.id ? 'rgba(128,128,128,0.30)' : 'transparent',
-                            },
-                            onClick: () => setDraftSession(session.id),
-                          },
-                          `${session.title}${session.cwd ? ` · ${session.cwd}` : ''}`,
-                        ),
-                      ),
+                  { style: styles.pickerWrap, ref: pickerRef },
+                  React.createElement(
+                    'button',
+                    {
+                      type: 'button',
+                      style: { ...styles.input, width: '100%', textAlign: 'left', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                      onClick: () => setPickerOpen((open) => !open),
+                    },
+                    draftSession
+                      ? `${sessions.find((session) => session.id === draftSession)?.title ?? draftSession}`
+                      : t('pickPlaceholder'),
+                  ),
+                  pickerOpen
+                    ? React.createElement(
+                        'div',
+                        { style: styles.popover },
+                        sessions.length === 0
+                          ? React.createElement('div', { style: styles.muted }, t('noSessions'))
+                          : sessions.map((session) =>
+                              React.createElement(
+                                'button',
+                                {
+                                  type: 'button',
+                                  key: session.id,
+                                  title: session.id,
+                                  style: {
+                                    ...styles.pickerItem,
+                                    background: draftSession === session.id ? 'rgba(128,128,128,0.30)' : 'transparent',
+                                  },
+                                  onClick: () => {
+                                    setDraftSession(session.id);
+                                    setPickerOpen(false);
+                                  },
+                                },
+                                `${session.title}${session.cwd ? ` · ${session.cwd}` : ''}`,
+                              ),
+                            ),
+                      )
+                    : null,
                 ),
                 React.createElement('input', {
                   style: styles.input,
@@ -322,6 +363,7 @@ window.__ModuleLoader__.load({
                     onClick: () => {
                       write([...entries.filter((item) => item.sessionId !== draftSession), { sessionId: draftSession, token: draftToken.trim() }]);
                       setAdding(false);
+                      setPickerOpen(false);
                       setDraftSession('');
                       setDraftToken('');
                     },
@@ -335,6 +377,7 @@ window.__ModuleLoader__.load({
                     style: styles.button,
                     onClick: () => {
                       setAdding(false);
+                      setPickerOpen(false);
                       setDraftSession('');
                       setDraftToken('');
                     },
