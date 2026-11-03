@@ -154,7 +154,6 @@ window.__ModuleLoader__.load({
           label: 'var(--dsw-alias-label-primary, inherit)',
           labelSecondary: 'var(--dsw-alias-label-secondary, inherit)',
           selectedBg: 'var(--dsw-alias-interactive-bg-active, rgba(128,128,128,0.30))',
-          hoverBg: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.18))',
         };
 
         const styles = {

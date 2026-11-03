@@ -274,6 +274,15 @@ function describeEvents(events) {
 // ── 工具定义(手写 Context.tools.register 契约)────────────────
 
 /** 所有工具的输出契约:一段给人看的话。 */
+/** 文件不存在时的统一说明:告诉模型调哪个工具、带什么参数。 */
+function needConfirmReport(pending, op) {
+  return (
+    `◆ 文件不存在:${pending.file}(没创建,内容已暂存 ${pending.chars} 字符)\n\n` +
+    `确认要新建,就调 \`editor_confirm_create\`(op:"${op}", file:"${pending.file}", confirm:"${pending.token}")。` +
+    `它走 DSH 的审批通道 —— 权限不够会问人。内容已暂存,不用重发 text,${pending.expiresIn} 秒内有效。`
+  );
+}
+
 const REPORT_OUTPUT = {
   schema: {
     type: 'object',
@@ -446,15 +455,7 @@ function createTools(bridge, tokenForSession) {
       const result = response.result ?? {};
 
       // 新文件不擅自创建:扩展会把内容暂存,给一个 token,等人这边的调用方明确确认
-      if (result.needConfirm) {
-        const pending = result.needConfirm;
-        return {
-          report:
-            `◆ 文件不存在:${pending.file}(没创建,内容已暂存 ${pending.chars} 字符)\n\n` +
-            `确认要新建,就调 \`editor_confirm_create\`(op:"insert", file:"${pending.file}", confirm:"${pending.token}")。` +
-            `它走 DSH 的审批通道 —— 权限不够会问人。内容已暂存,不用重发 text,${pending.expiresIn} 秒内有效。`,
-        };
-      }
+      if (result.needConfirm) return { report: needConfirmReport(result.needConfirm, 'insert') };
 
       const where = result.at ? `第 ${result.at.line} 行` : '末尾';
       const created = result.created ? '(新建文件)' : '';
@@ -495,15 +496,7 @@ function createTools(bridge, tokenForSession) {
       const result = response.result ?? {};
 
       // 和 insert 一样:新文件先暂存,要一个明确的确认
-      if (result.needConfirm) {
-        const pending = result.needConfirm;
-        return {
-          report:
-            `◆ 文件不存在:${pending.file}(没创建,内容已暂存 ${pending.chars} 字符)\n\n` +
-            `确认要新建,就调 \`editor_confirm_create\`(op:"replace", file:"${pending.file}", confirm:"${pending.token}")。` +
-            `它走 DSH 的审批通道。内容已暂存,${pending.expiresIn} 秒内有效。`,
-        };
-      }
+      if (result.needConfirm) return { report: needConfirmReport(result.needConfirm, 'replace') };
 
       const warning = result.warning ? `\n\n⚠ ${result.warning}` : '';
       const handoffReport = await handoff(exec);
@@ -569,17 +562,8 @@ function createTools(bridge, tokenForSession) {
       '交棒:停下来等用户点「继续」或「暂停」。**写操作(editor_insert / editor_replace / editor_confirm_create)已经自带交棒,不用再调这个**;它用于指完(editor_point)之后,或者只想等一会儿的时候。只被那两个按钮唤醒,打字和切文件都不算。',
     parameters: { type: 'object', additionalProperties: false, properties: {} },
     async execute(_args, exec) {
-      const response = await call(exec, 'wait', { timeoutMs: 0 }, { timeoutMs: WAIT_FOREVER });
-      const result = response.result ?? {};
-      const extra = describeEvents(result.events);
-
-      if (result.ended === 'abort') {
-        return { report: `⏸ 用户点了暂停 —— **这一拍的写入已经被撤回**,代码回到写之前。\n\n先别接着写,问一句"哪里不对"。${extra}` };
-      }
-      if (result.ended === 'timeout') {
-        return { report: `⏸ 等太久了,没有回应。${extra}` };
-      }
-      return { report: `▶ 用户继续了。${extra}` };
+      // 和写操作内部用的是同一个交棒实现 —— 文案与语义只有一处
+      return { report: await handoff(exec) };
     },
   });
 
