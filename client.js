@@ -161,6 +161,30 @@ window.__ModuleLoader__.load({
             font: 'inherit',
             minWidth: 0,
           },
+          picker: {
+            maxHeight: 180,
+            overflowY: 'auto',
+            border: '1px solid rgba(128,128,128,0.35)',
+            borderRadius: 6,
+            padding: 4,
+            display: 'grid',
+            gap: 2,
+            minWidth: 0,
+            background: 'rgba(128,128,128,0.10)',
+          },
+          pickerItem: {
+            textAlign: 'left',
+            border: 'none',
+            borderRadius: 4,
+            padding: '4px 6px',
+            font: 'inherit',
+            color: 'inherit',
+            cursor: 'pointer',
+            background: 'transparent',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          },
           button: {
             background: 'transparent',
             border: '1px solid rgba(128,128,128,0.35)',
@@ -259,17 +283,29 @@ window.__ModuleLoader__.load({
             ? React.createElement(
                 'div',
                 { style: { ...styles.row, gridTemplateColumns: '1fr minmax(0, 220px) auto auto', paddingTop: 10 } },
+                // 自绘列表而不是 <select>:原生下拉弹层由浏览器绘制,不跟主题走 ——
+                // 深色主题下会变成白底白字。自己画的一行一个按钮,颜色永远和页面一致。
                 React.createElement(
-                  'select',
-                  {
-                    style: styles.input,
-                    value: draftSession,
-                    onChange: (event) => setDraftSession(event.target.value),
-                  },
-                  React.createElement('option', { value: '' }, t('pickPlaceholder')),
-                  ...sessions.map((session) =>
-                    React.createElement('option', { key: session.id, value: session.id }, `${session.title}${session.cwd ? ` · ${session.cwd}` : ''}`),
-                  ),
+                  'div',
+                  { style: styles.picker },
+                  sessions.length === 0
+                    ? React.createElement('div', { style: styles.muted }, t('noSessions'))
+                    : sessions.map((session) =>
+                        React.createElement(
+                          'button',
+                          {
+                            type: 'button',
+                            key: session.id,
+                            title: session.id,
+                            style: {
+                              ...styles.pickerItem,
+                              background: draftSession === session.id ? 'rgba(128,128,128,0.30)' : 'transparent',
+                            },
+                            onClick: () => setDraftSession(session.id),
+                          },
+                          `${session.title}${session.cwd ? ` · ${session.cwd}` : ''}`,
+                        ),
+                      ),
                 ),
                 React.createElement('input', {
                   style: styles.input,
