@@ -61,6 +61,38 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 
 改这个文件不用动代码 —— 重启后生效。
 
+## 文件
+
+| 文件 | 职责 |
+|---|---|
+| `index.js` | 宿主半:九个工具、交棒、审批、skill、配置 |
+| `client.js` | 客户端半:设置页里的表单 |
+| `lib/bridge.js` | 到编辑器的 TCP 客户端(token、自环守卫、推送) |
+| `skills/editor-tutor/SKILL.md` | 教模型"什么时候指、什么时候写"的 skill |
+| `cordis.patch.yml` | 把插件行插进 profile |
+| `locale/*.json` + `icon.svg` | 插件列表里显示的名字 / 描述 / 图标 |
+
+## 实现要点(都是踩出来的)
+
+1. **配置字段必须 `.volatile()`**
+   DSH 的设置页只把标了 `volatile` 的字段当成可配置项(`dsh-settings` 的 `volatileForm`
+   过滤)。没有这个标记,整条配置会被跳过,客户端永远拿到 `unavailable` ——
+   表现出来就是"设置页说服务不可用"。参考 `agent-loop` 的
+   `maxParallelToolCalls: z.number().default(10).volatile()`。
+
+2. **设置页必须有客户端半**
+   Host 导出 `Config` 只是注册了 schema,**不会自动生成页面**。左侧导航里那些页
+   (费用 / 快照 / 状态文案 / 语音模式)全是插件自己的 `client.js` 注册进
+   `settings.section` 槽渲染的。
+
+3. **写类工具自带交棒**
+   `editor_insert` / `editor_replace` / `editor_confirm_create` 在返回前就等人按按钮。
+   不靠提示词约束模型 —— 让它没有"接着写"这个选项。
+
+4. **新建文件走审批**
+   `editor_insert` 遇到不存在的文件只返回 token;真正的创建由 `editor_confirm_create`
+   完成,它被 `tools/pre-execute` 拦下来返回 `{kind:'ask'}`,走 DSH 的 approval 通道。
+
 ## 配置
 
 **DSH 设置页里能直接改** —— 插件导出了 `Config` schema,设置页会给这个插件渲染一张表单:

@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
 
           const active = pick();
           if (!active) {
-            // 把实际状态写出来,省得下次再猜
+            // 两个命名空间都不可用时,把真实状态写出来 —— 排查时这行比"不可用"有用得多
             let statuses = '';
             try {
               statuses = candidates

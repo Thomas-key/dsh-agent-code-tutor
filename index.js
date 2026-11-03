@@ -14,19 +14,26 @@
  *   editor_replace 替换一段(或整份)
  *   editor_point   指:高亮若干段 + 行尾注解(不改代码)
  *   editor_wait    交棒:等人点「继续 / 暂停」
- *   editor_confirm_create  确认新建文件(会弹窗问人)
+ *   editor_confirm_create  确认新建文件(会弹窗问人),写入后同样交棒
+ *
+ * 写类工具(insert / replace / confirm_create)都**自带交棒**:返回时人已经按过按钮。
+ * 这不是提示词的约束,是工具的结构 —— 模型没有"接着写"这个选项。
  *
  * 注意:**落盘(save)和清浮层(clear)没有开放给 agent** —— 存不存、擦不擦由人决定。
  *
- * 这里**不 import 任何 @deepseek-ai/* 包**:工具定义按 Context.tools.register 的
- * 原始契约手写。原因很实在 —— 以 `link:` 装进来的工作区插件,DSH 的模块解析层只在它
- * manifest 的 peerDependencies 里认识那个名字;与其赌解析层,不如一个 bare import 都不要。
+ * 工具定义按 Context.tools.register 的原始契约手写,不 import 任何运行时包。
+ * 唯一的例外是 `@deepseek-ai/schemastery` —— 设置页的表单 schema 需要它;
+ * 裸导入失败时会从 DSH 自己的安装位置借一个 require(见 loadSchema),
+ * 两种安装方式(link: 与 registry/github)都能跑。
  *
  * 配置(端口 / 会话 token)按这个顺序取,前面的赢:
- *   1. 插件配置(cordis.patch.yml 里该条目的 config)
+ *   1. DSH 设置页里的表单 / cordis.patch.yml 里该条目的 config
  *   2. 环境变量 EDITOR_API_PORT / EDITOR_API_TOKEN
  *   3. 插件目录下的 config.json
- *   4. 默认值:端口 41890,token 空(空的话每个请求都会被拒)
+ *   4. 自动发现:扫 cwd 及其直接子目录的 .vscode/settings.json 里的 tutorApi.conversationToken
+ *   5. 默认值:端口 41890,token 空(空的话每个请求都会被拒)
+ *
+ * 空字符串一律当作"没配" —— 设置页的默认值不会盖住后面几层。
  *
  * @module dsh-agent-code-tutor
  */
@@ -102,8 +109,6 @@ const OP_TIMEOUT_MS = 30000;
  */
 const WAIT_FOREVER = 0;
 
-/** 一次塞进模型上下文的最多行数。 */
-const MAX_LINES = 400;
 
 // ── 配置 ────────────────────────────────────────────────────
 
