@@ -359,7 +359,7 @@ function editorTool({ name: toolName, description, parameters, execute }) {
 
 // ── 工具实现 ────────────────────────────────────────────────
 
-function createTools(bridge, tokenForSession, probe) {
+function createTools(bridge, tokenForSession) {
   /**
    * 调一次编辑器,拿整个信封。
    *
@@ -639,16 +639,7 @@ function createTools(bridge, tokenForSession, probe) {
     },
   });
 
-  const selftest = editorTool({
-    name: 'editor_selftest',
-    description: '诊断:报告插件当前看到的绑定表、默认 token 和调用方的会话 id。只在排查连通性问题时用。',
-    parameters: { type: 'object', additionalProperties: false, properties: {} },
-    async execute(_args, exec) {
-      return { report: JSON.stringify(probe(exec?.agent?.id ?? null), null, 1) };
-    },
-  });
-
-  return [ping, look, read, open, insert, replace, point, wait, confirmCreate, selftest];
+  return [ping, look, read, open, insert, replace, point, wait, confirmCreate];
 }
 
 // ── 唤醒(推送 → 新的一轮)──────────────────────────────────
@@ -826,31 +817,7 @@ export function apply(ctx, config) {
   /** 这个会话该用哪个工作区的 token:查绑定表,查不到用插件默认的。 */
   const tokenForSession = (sessionId) => readBindings().bySession.get(sessionId) ?? token;
 
-  /** 自检用:把"我看到了什么"原样吐出来,不给任何猜测留余地。 */
-  const probe = (sessionId) => {
-    const live = readBindings(); // 现读:自检要看到此刻的真实值
-    return {
-      sessionId,
-      bindings: [...live.bySession.entries()],
-      boundToThisSession: sessionId ? (live.bySession.get(sessionId) ?? null) : null,
-      defaultToken: token ? `${token.slice(0, 4)}…` : '(空)',
-      raw: {
-        configType: typeof config,
-        bindingsType: typeof config?.bindings,
-        hasGet: typeof config?.bindings?.get === 'function',
-        live: (() => {
-          try {
-            return String(settingValue(config?.bindings) ?? '').slice(0, 80);
-          } catch {
-            return '(读不出来)';
-          }
-        })(),
-        keys: config && typeof config === 'object' ? Object.keys(config) : [],
-      },
-    };
-  };
-
-  for (const tool of createTools(bridge, tokenForSession, probe)) {
+  for (const tool of createTools(bridge, tokenForSession)) {
     ctx.effect(() => ctx.tools.register(tool), `dsh-agent-code-tutor.tool.${tool.name}`);
   }
 

@@ -143,6 +143,28 @@ dsh plugin add https://github.com/Thomas-key/dsh-agent-code-tutor
 > `sessionId` 是 DSH 的会话 id(会话 URL 里的那串)。绑定之后,只要那个会话还开着,
 > 编辑器里问一句就能直达它 —— 不需要猜、也不会因为同时开着别的会话而丢消息。
 
+## 配置字段的坑
+
+1. **`.volatile()` 的字段不是值,是活动单元**
+   `config.bindings` 拿到的是一个带 `.get()` 的对象。直接 `String()` 会得到
+   `"[object Object]"`,`JSON.stringify()` 得到 `"{}"` —— 解析出来就是乱码。
+   正确读法:
+
+   ```js
+   const value = typeof field?.get === 'function' ? field.get() : field;
+   ```
+
+   参考 `dsh-agent-loop`:`config.maxParallelToolCalls.get()`。
+
+2. **必须现读,不能缓存**
+   活动单元的好处是改了设置立刻生效;把它们在 `apply()` 里存成普通值,
+   就变成"改了设置没反应"。所以 `bindings` 每次请求时重新读一遍。
+
+3. **两个 code-server 窗口会抢同一个端口**
+   后开的那个窗口扩展绑不上 `41890`,**静默失败**(日志里只有一行 EADDRINUSE),
+   而先开的窗口继续用它的 token 服务 —— 表现为"我明明换了工作区,怎么还是旧的"。
+   换工作区请用「打开文件夹」在同一个窗口里切,或关掉旧窗口再 Reload。
+
 ## 设计
 
 - **不 import 任何 `@deepseek-ai/*` 包**:以 `link:` 装进来的工作区插件,模块解析层
