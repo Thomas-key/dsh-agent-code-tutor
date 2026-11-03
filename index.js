@@ -175,6 +175,23 @@ function parseBindings(text) {
 }
 
 /**
+ * 读一个配置字段的值。
+ *
+ * `.volatile()` 声明的字段不是普通值,而是一个**活动单元**(带 `.get()`)——
+ * 这样改设置能立刻生效。直接 String() 它会得到 "[object Object]"。
+ */
+function settingValue(field) {
+  if (field && typeof field.get === 'function') {
+    try {
+      return field.get();
+    } catch {
+      return undefined;
+    }
+  }
+  return field;
+}
+
+/**
  * 把配置值取成字符串。
  *
  * 正常情况下 config 里就是字符串;但 DSH 的 loader 有时会把标量包成对象
@@ -199,9 +216,9 @@ function resolveConfig(passed) {
   const local = readJsonFile(path.join(HERE, 'config.json')) ?? {};
   // 注意 config 里的默认值(端口 41890 / token 空)不能盖住环境变量和 config.json,
   // 所以用 pick 而不是 ?? —— 空字符串要当成"没配"。
-  const port = Number(pick(passed?.port, process.env.EDITOR_API_PORT, local.port)) || DEFAULT_PORT;
+  const port = Number(pick(settingValue(passed?.port), process.env.EDITOR_API_PORT, local.port)) || DEFAULT_PORT;
 
-  let token = String(pick(passed?.token, process.env.EDITOR_API_TOKEN, local.token) ?? '');
+  let token = String(pick(settingValue(passed?.token), process.env.EDITOR_API_TOKEN, local.token) ?? '');
   let discoveredFrom = null;
   if (!token) {
     const found = discoverToken(process.cwd());
@@ -210,7 +227,7 @@ function resolveConfig(passed) {
       discoveredFrom = found.file;
     }
   }
-  const bindingsText = textOf(pick(passed?.bindings, process.env.EDITOR_API_BINDINGS, local.bindings) ?? '');
+  const bindingsText = textOf(pick(settingValue(passed?.bindings), process.env.EDITOR_API_BINDINGS, local.bindings) ?? '');
 
   return { port, token, bindings: parseBindings(bindingsText), discoveredFrom };
 }
@@ -725,7 +742,20 @@ function wakeAgent(ctx, event, bindings) {
  * @param {{port?: number, token?: string}} [config]
  */
 export function apply(ctx, config) {
-  const { port, token, bindings, discoveredFrom } = resolveConfig(config);
+  const { port, token, discoveredFrom } = resolveConfig(config);
+
+  /**
+   * 绑定表每次现读,不在启动时缓存。
+   *
+   * 因为 `bindings` 是 volatile 字段 —— 用户改了设置立刻生效,
+   * 缓存住就会一直用旧值(表现为"改了绑定没反应")。
+   */
+  const readBindings = () => {
+    const local = readJsonFile(path.join(HERE, 'config.json')) ?? {};
+    return parseBindings(
+      textOf(pick(settingValue(config?.bindings), process.env.EDITOR_API_BINDINGS, local.bindings) ?? ''),
+    );
+  };
   const bridge = new Bridge({ port, token });
 
   if (discoveredFrom) {
@@ -741,7 +771,7 @@ export function apply(ctx, config) {
 
   // 反方向:人在状态栏点了「询问 agent」或「唤醒」,而 agent 没在等。
   bridge.onEvent((event) => {
-    if (event?.event === 'ask' || event?.event === 'confirm') wakeAgent(ctx, event, bindings);
+    if (event?.event === 'ask' || event?.event === 'confirm') wakeAgent(ctx, event, readBindings());
   });
 
   // 唤醒要靠一条常连接;编辑器晚起来也能自己重连。
@@ -794,29 +824,31 @@ export function apply(ctx, config) {
   );
 
   /** 这个会话该用哪个工作区的 token:查绑定表,查不到用插件默认的。 */
-  const tokenForSession = (sessionId) => bindings.bySession.get(sessionId) ?? token;
+  const tokenForSession = (sessionId) => readBindings().bySession.get(sessionId) ?? token;
 
   /** 自检用:把"我看到了什么"原样吐出来,不给任何猜测留余地。 */
-  const probe = (sessionId) => ({
-    sessionId,
-    bindings: [...bindings.bySession.entries()],
-    boundToThisSession: sessionId ? (bindings.bySession.get(sessionId) ?? null) : null,
-    defaultToken: token ? `${token.slice(0, 4)}…` : '(空)',
-    // 原始形状:插件 apply 时拿到的 config.bindings 到底是什么类型
-    raw: {
-      configType: typeof config,
-      bindingsType: typeof config?.bindings,
-      preview: String(config?.bindings ?? '(undefined)').slice(0, 80),
-      json: (() => {
-        try {
-          return JSON.stringify(config?.bindings).slice(0, 200);
-        } catch {
-          return '(无法序列化)';
-        }
-      })(),
-      keys: config && typeof config === 'object' ? Object.keys(config) : [],
-    },
-  });
+  const probe = (sessionId) => {
+    const live = readBindings(); // 现读:自检要看到此刻的真实值
+    return {
+      sessionId,
+      bindings: [...live.bySession.entries()],
+      boundToThisSession: sessionId ? (live.bySession.get(sessionId) ?? null) : null,
+      defaultToken: token ? `${token.slice(0, 4)}…` : '(空)',
+      raw: {
+        configType: typeof config,
+        bindingsType: typeof config?.bindings,
+        hasGet: typeof config?.bindings?.get === 'function',
+        live: (() => {
+          try {
+            return String(settingValue(config?.bindings) ?? '').slice(0, 80);
+          } catch {
+            return '(读不出来)';
+          }
+        })(),
+        keys: config && typeof config === 'object' ? Object.keys(config) : [],
+      },
+    };
+  };
 
   for (const tool of createTools(bridge, tokenForSession, probe)) {
     ctx.effect(() => ctx.tools.register(tool), `dsh-agent-code-tutor.tool.${tool.name}`);
